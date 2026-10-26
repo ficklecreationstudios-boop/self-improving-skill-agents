@@ -1,0 +1,6 @@
+{"case_id":"eng-python-debug","task":"debug Python tests in a repository","domain":"engineering","expected_skill_id":"software_engineering"}
+{"case_id":"eng-review-code","task":"review code changes and identify regression tests","domain":"engineering","expected_skill_id":"software_engineering"}
+{"case_id":"eng-repository-fix","task":"fix a repository issue using testing and debugging","domain":"engineering","expected_skill_id":"software_engineering"}
+{"case_id":"general-explain","task":"explain a concept clearly and state uncertainty","domain":"general","expected_skill_id":"general"}
+{"case_id":"general-summary","task":"summarize these notes into a short overview","domain":"general","expected_skill_id":"general"}
+{"case_id":"general-plan","task":"plan a simple writing task with clear steps","domain":"general","expected_skill_id":"general"}
