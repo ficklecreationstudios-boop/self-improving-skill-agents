@@ -19,7 +19,7 @@ Not implemented or not yet verified:
 - OS-level sandboxing, process isolation, and a safe way to add future privileged tools.
 - A robust semantic answer-quality or prompt-injection evaluator. Candidate phrase screens and substring regression checks are narrow and can be gamed.
 - Live Ollama integration on the owner's Windows machine.
-- External immutable audit storage, key rotation/revocation, per-user identities or role management.
+- External immutable audit storage, enforced external identity/per-user roles, and protection against all concurrent revocation/apply races.
 - Power-loss fault injection across every file-write window.
 - Independent adversarial security review and a held-out quality benchmark with preregistered thresholds.
 
