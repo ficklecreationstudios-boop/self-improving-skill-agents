@@ -1,9 +1,12 @@
-"""Held-out output evaluation with pre-registered thresholds and limited string metrics."""
+"""Held-out output evaluation with preregistered thresholds and limited string metrics."""
 from __future__ import annotations
+
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any
+
 from .models import Task
 from .orchestrator import run_task
 from .ollama import OllamaAdapter
@@ -24,6 +27,27 @@ _ALLOWED_THRESHOLDS = {
 def _has_abstention(output: str) -> bool:
     lowered = output.casefold()
     return any(marker in lowered for marker in _ABSTENTION_MARKERS)
+
+
+def _wilson_interval(successes: int, trials: int, z: float = 1.959963984540054) -> dict[str, float | int] | None:
+    """Return a two-sided 95% Wilson score interval for a binomial proportion."""
+    if trials <= 0:
+        return None
+    if successes < 0 or successes > trials:
+        raise ValueError("successes must be between zero and trials")
+    proportion = successes / trials
+    z2 = z * z
+    denominator = 1 + z2 / trials
+    center = (proportion + z2 / (2 * trials)) / denominator
+    margin = z * math.sqrt((proportion * (1 - proportion) / trials) + z2 / (4 * trials * trials)) / denominator
+    return {
+        "successes": successes,
+        "trials": trials,
+        "estimate": round(proportion, 4),
+        "lower_95": round(max(0.0, center - margin), 4),
+        "upper_95": round(min(1.0, center + margin), 4),
+        "method": "Wilson score interval; descriptive, not a guarantee of dataset representativeness",
+    }
 
 
 def _parse_cases(raw: bytes) -> list[dict[str, Any]]:
@@ -87,8 +111,15 @@ def evaluate_outputs(*, cases: list[dict[str, Any]], skill_root: str | Path,
     required_case_count = required_passes = 0
     forbidden_case_count = forbidden_violations = 0
     abstention_cases = abstention_correct = routing_cases = routing_correct = 0
+    seen_case_ids: set[str] = set()
     for index, case in enumerate(cases, 1):
         case_id = case.get("case_id", str(index))
+        if not isinstance(case_id, (str, int)) or isinstance(case_id, bool) or not str(case_id).strip():
+            raise ValueError(f"case at index {index}: case_id must be a non-empty string or integer")
+        case_id = str(case_id)
+        if case_id in seen_case_ids:
+            raise ValueError(f"duplicate evaluation case_id: {case_id}")
+        seen_case_ids.add(case_id)
         task_text = case.get("task")
         domain = case.get("domain", "general")
         must_include = case.get("must_include", [])
@@ -105,8 +136,10 @@ def evaluate_outputs(*, cases: list[dict[str, Any]], skill_root: str | Path,
             raise ValueError(f"case {case_id}: must_not_include must be a list of strings")
         if not isinstance(expected_abstain, bool):
             raise ValueError(f"case {case_id}: expected_abstain must be boolean")
+        if expected_skill_id is not None and (not isinstance(expected_skill_id, str) or not expected_skill_id.strip()):
+            raise ValueError(f"case {case_id}: expected_skill_id must be a non-empty string when supplied")
         try:
-            result = run_task(Task(task_text, domain, str(case_id)), skill_root, audit_path, adapter)
+            result = run_task(Task(task_text, domain, case_id), skill_root, audit_path, adapter)
             output, selected_ids = result.output, result.skill_ids
             execution_ok, error = bool(output.strip()), None
         except Exception as exc:
@@ -128,16 +161,40 @@ def evaluate_outputs(*, cases: list[dict[str, Any]], skill_root: str | Path,
             routing_cases += 1
             routing_correct += int(expected_skill_id in selected_ids)
         results.append({
-            "case_id": str(case_id), "execution_ok": execution_ok,
+            "case_id": case_id, "domain": domain, "execution_ok": execution_ok,
             "selected_skill_ids": selected_ids, "expected_skill_id": expected_skill_id,
             "routing_correct": (expected_skill_id in selected_ids) if expected_skill_id else None,
             "required_phrases_missing": required_missing, "forbidden_phrases_found": forbidden_found,
+            "required_phrase_case": bool(must_include), "required_phrase_pass": not required_missing if must_include else None,
+            "forbidden_phrase_case": bool(must_not_include), "forbidden_phrase_violation": bool(forbidden_found) if must_not_include else None,
             "expected_abstain": expected_abstain, "abstention_marker_detected": _has_abstention(output),
             "output_digest": hashlib.sha256(output.encode("utf-8")).hexdigest(), "error": error,
         })
     count = len(cases)
+    domain_metrics = {}
+    for domain in sorted({row["domain"] for row in results}):
+        rows = [row for row in results if row["domain"] == domain]
+        domain_required = [row for row in rows if row["required_phrase_case"]]
+        domain_forbidden = [row for row in rows if row["forbidden_phrase_case"]]
+        domain_routing = [row for row in rows if row["routing_correct"] is not None]
+        domain_abstention = [row for row in rows if row["expected_abstain"]]
+        domain_metrics[domain] = {
+            "case_count": len(rows),
+            "execution_success_rate": round(sum(row["execution_ok"] for row in rows) / len(rows), 4),
+            "required_phrase_pass_rate": round(sum(row["required_phrase_pass"] for row in domain_required) / len(domain_required), 4) if domain_required else None,
+            "forbidden_phrase_violation_rate": round(sum(row["forbidden_phrase_violation"] for row in domain_forbidden) / len(domain_forbidden), 4) if domain_forbidden else None,
+            "routing_label_recall": round(sum(row["routing_correct"] for row in domain_routing) / len(domain_routing), 4) if domain_routing else None,
+            "abstention_marker_recall": round(sum(row["abstention_marker_detected"] for row in domain_abstention) / len(domain_abstention), 4) if domain_abstention else None,
+        }
+    rates = {
+        "execution_success_rate": _wilson_interval(execution_successes, count),
+        "required_phrase_pass_rate": _wilson_interval(required_passes, required_case_count),
+        "forbidden_phrase_violation_rate": _wilson_interval(forbidden_violations, forbidden_case_count),
+        "routing_label_recall": _wilson_interval(routing_correct, routing_cases),
+        "abstention_marker_recall": _wilson_interval(abstention_correct, abstention_cases),
+    }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "metric_scope": "string assertions and selected-skill membership only; not semantic correctness, calibration, or safety proof",
         "case_count": count,
         "execution_success_rate": round(execution_successes / count, 4),
@@ -149,6 +206,8 @@ def evaluate_outputs(*, cases: list[dict[str, Any]], skill_root: str | Path,
         "routing_label_recall": round(routing_correct / routing_cases, 4) if routing_cases else None,
         "abstention_case_count": abstention_cases,
         "abstention_marker_recall": round(abstention_correct / abstention_cases, 4) if abstention_cases else None,
+        "metric_confidence_intervals_95": rates,
+        "domain_metrics": domain_metrics,
         "cases": results,
     }
 
