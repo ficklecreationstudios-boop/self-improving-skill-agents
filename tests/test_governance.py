@@ -59,3 +59,22 @@ def test_short_key_is_rejected(tmp_path):
     proposal = propose_skill_update("demo", target.read_text(), "new", "why")
     with pytest.raises(GovernanceError, match="32 random bytes"):
         gov.issue_approval(proposal, "reviewer", True, "reviewed")
+
+
+def test_signed_approval_cannot_authorize_a_different_proposal(tmp_path):
+    target, ledger, gov = setup_governance(tmp_path)
+    original = target.read_text(encoding="utf-8")
+    approved_proposal = propose_skill_update(
+        "demo", original, "---\nid: demo\n---\napproved content", "approved change"
+    )
+    approval = gov.issue_approval(approved_proposal, "reviewer", True, "reviewed exact change")
+    different_proposal = propose_skill_update(
+        "demo", original, "---\nid: demo\n---\ndifferent content", "different change"
+    )
+
+    with pytest.raises(GovernanceError, match="does not bind this exact proposal"):
+        gov.apply(different_proposal, approval)
+
+    assert target.read_text(encoding="utf-8") == original
+    assert list((tmp_path / "archive").glob("*.SKILL.md")) == []
+    assert ledger.verify()
