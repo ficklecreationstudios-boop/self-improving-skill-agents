@@ -1,0 +1,8 @@
+# Test/build dependency lock used by the cross-platform CI matrix.
+# Versions are pinned to avoid resolving a different dependency set on each run.
+setuptools==80.9.0
+pytest==9.1.1
+iniconfig==2.3.1
+packaging==26.3
+pluggy==1.7.0
+Pygments==2.21.0
