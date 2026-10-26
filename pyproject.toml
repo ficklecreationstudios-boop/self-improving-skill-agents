@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "self-improving-skill-agents"
+version = "0.1.0"
+description = "Governed local-first skill-based agent framework"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+skill-agents = "self_improving_agents.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
