@@ -20,7 +20,7 @@ _ABSTENTION_MARKERS = (
 _ALLOWED_THRESHOLDS = {
     "minimum_execution_success_rate", "minimum_required_phrase_pass_rate",
     "maximum_forbidden_phrase_violation_rate", "minimum_routing_label_recall",
-    "minimum_abstention_marker_recall",
+    "minimum_abstention_marker_recall", "minimum_abstention_marker_precision",
 }
 
 
@@ -110,7 +110,7 @@ def evaluate_outputs(*, cases: list[dict[str, Any]], skill_root: str | Path,
     execution_successes = 0
     required_case_count = required_passes = 0
     forbidden_case_count = forbidden_violations = 0
-    abstention_cases = abstention_correct = routing_cases = routing_correct = 0
+    abstention_cases = abstention_correct = abstention_marker_detections = routing_cases = routing_correct = 0
     seen_case_ids: set[str] = set()
     for index, case in enumerate(cases, 1):
         case_id = case.get("case_id", str(index))
@@ -154,9 +154,11 @@ def evaluate_outputs(*, cases: list[dict[str, Any]], skill_root: str | Path,
         if must_not_include:
             forbidden_case_count += 1
             forbidden_violations += int(bool(forbidden_found))
+        abstention_detected = _has_abstention(output)
+        abstention_marker_detections += int(abstention_detected)
         if expected_abstain:
             abstention_cases += 1
-            abstention_correct += int(_has_abstention(output))
+            abstention_correct += int(abstention_detected)
         if isinstance(expected_skill_id, str) and expected_skill_id:
             routing_cases += 1
             routing_correct += int(expected_skill_id in selected_ids)
@@ -167,7 +169,7 @@ def evaluate_outputs(*, cases: list[dict[str, Any]], skill_root: str | Path,
             "required_phrases_missing": required_missing, "forbidden_phrases_found": forbidden_found,
             "required_phrase_case": bool(must_include), "required_phrase_pass": not required_missing if must_include else None,
             "forbidden_phrase_case": bool(must_not_include), "forbidden_phrase_violation": bool(forbidden_found) if must_not_include else None,
-            "expected_abstain": expected_abstain, "abstention_marker_detected": _has_abstention(output),
+            "expected_abstain": expected_abstain, "abstention_marker_detected": abstention_detected,
             "output_digest": hashlib.sha256(output.encode("utf-8")).hexdigest(), "error": error,
         })
     count = len(cases)
@@ -178,6 +180,7 @@ def evaluate_outputs(*, cases: list[dict[str, Any]], skill_root: str | Path,
         domain_forbidden = [row for row in rows if row["forbidden_phrase_case"]]
         domain_routing = [row for row in rows if row["routing_correct"] is not None]
         domain_abstention = [row for row in rows if row["expected_abstain"]]
+        domain_abstention_detected = [row for row in rows if row["abstention_marker_detected"]]
         domain_metrics[domain] = {
             "case_count": len(rows),
             "execution_success_rate": round(sum(row["execution_ok"] for row in rows) / len(rows), 4),
@@ -185,6 +188,7 @@ def evaluate_outputs(*, cases: list[dict[str, Any]], skill_root: str | Path,
             "forbidden_phrase_violation_rate": round(sum(row["forbidden_phrase_violation"] for row in domain_forbidden) / len(domain_forbidden), 4) if domain_forbidden else None,
             "routing_label_recall": round(sum(row["routing_correct"] for row in domain_routing) / len(domain_routing), 4) if domain_routing else None,
             "abstention_marker_recall": round(sum(row["abstention_marker_detected"] for row in domain_abstention) / len(domain_abstention), 4) if domain_abstention else None,
+            "abstention_marker_precision": round(sum(row["expected_abstain"] for row in domain_abstention_detected) / len(domain_abstention_detected), 4) if domain_abstention_detected else None,
         }
     rates = {
         "execution_success_rate": _wilson_interval(execution_successes, count),
@@ -192,6 +196,7 @@ def evaluate_outputs(*, cases: list[dict[str, Any]], skill_root: str | Path,
         "forbidden_phrase_violation_rate": _wilson_interval(forbidden_violations, forbidden_case_count),
         "routing_label_recall": _wilson_interval(routing_correct, routing_cases),
         "abstention_marker_recall": _wilson_interval(abstention_correct, abstention_cases),
+        "abstention_marker_precision": _wilson_interval(abstention_correct, abstention_marker_detections),
     }
     return {
         "schema_version": 2,
@@ -205,7 +210,9 @@ def evaluate_outputs(*, cases: list[dict[str, Any]], skill_root: str | Path,
         "routing_case_count": routing_cases,
         "routing_label_recall": round(routing_correct / routing_cases, 4) if routing_cases else None,
         "abstention_case_count": abstention_cases,
+        "abstention_marker_detection_count": abstention_marker_detections,
         "abstention_marker_recall": round(abstention_correct / abstention_cases, 4) if abstention_cases else None,
+        "abstention_marker_precision": round(abstention_correct / abstention_marker_detections, 4) if abstention_marker_detections else None,
         "metric_confidence_intervals_95": rates,
         "domain_metrics": domain_metrics,
         "cases": results,
@@ -219,6 +226,7 @@ def _evaluate_thresholds(report: dict[str, Any], thresholds: dict[str, float]) -
         "maximum_forbidden_phrase_violation_rate": ("forbidden_phrase_violation_rate", "max"),
         "minimum_routing_label_recall": ("routing_label_recall", "min"),
         "minimum_abstention_marker_recall": ("abstention_marker_recall", "min"),
+        "minimum_abstention_marker_precision": ("abstention_marker_precision", "min"),
     }
     checks = {}
     for name, threshold in thresholds.items():
