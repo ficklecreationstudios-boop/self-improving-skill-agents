@@ -102,9 +102,28 @@ def evaluate_candidate_behavior(*, skill_id: str, candidate_content: str,
                                 cases: list[dict[str, Any]], adapter: OllamaAdapter) -> BehavioralEvaluation:
     if not cases:
         raise LearningGateError("A non-empty frozen regression case file is required")
+    # Validate all IDs before inference so duplicate cases cannot partially consume model calls.
+    preflight_ids: set[str] = set()
+    for index, case in enumerate(cases, 1):
+        if not isinstance(case, dict):
+            raise LearningGateError(f"regression case at index {index} must be an object")
+        case_id = case.get("case_id", str(index))
+        if not isinstance(case_id, (str, int)) or isinstance(case_id, bool) or not str(case_id).strip():
+            raise LearningGateError(f"case at index {index}: case_id must be a non-empty string or integer")
+        normalized_id = str(case_id)
+        if normalized_id in preflight_ids:
+            raise LearningGateError(f"duplicate regression case_id: {normalized_id}")
+        preflight_ids.add(normalized_id)
     results = []
+    seen_case_ids: set[str] = set()
     for index, case in enumerate(cases, 1):
         case_id = case.get("case_id", str(index))
+        if not isinstance(case_id, (str, int)) or isinstance(case_id, bool) or not str(case_id).strip():
+            raise LearningGateError(f"case at index {index}: case_id must be a non-empty string or integer")
+        case_id = str(case_id)
+        if case_id in seen_case_ids:
+            raise LearningGateError(f"duplicate regression case_id: {case_id}")
+        seen_case_ids.add(case_id)
         task = case.get("task")
         must_include = case.get("must_include", [])
         must_not_include = case.get("must_not_include", [])
@@ -170,7 +189,16 @@ def create_candidate_proposal(*, skill_id: str, skill_root: str | Path, task_id:
         f"TARGET_SKILL_ID: {skill_id}\nCURRENT_SKILL:\n{current}\n\nTASK:\n{task_text}"
         f"\n\nPRIOR_OUTPUT:\n{output_text}\n\nUSER_RATING: {rating}/5\nUSER_FEEDBACK:\n{feedback}"
     )
-    candidate = adapter.generate(prompt)
+    try:
+        candidate = adapter.generate(prompt)
+        if not isinstance(candidate, str):
+            raise TypeError("candidate response must be text")
+    except Exception as exc:
+        ledger.append("skill_candidate_generation_failed", {
+            "task_id": task_id, "skill_id": skill_id,
+            "error_type": type(exc).__name__, "error": str(exc)[:300],
+        })
+        raise LearningGateError("Candidate generation failed; no proposal was created") from exc
     stripped = candidate.strip()
     if stripped.startswith("```") and stripped.endswith("```"):
         candidate = "\n".join(stripped.splitlines()[1:-1]).strip() + "\n"
@@ -186,8 +214,19 @@ def create_candidate_proposal(*, skill_id: str, skill_root: str | Path, task_id:
             "reasons": list(evaluation.reasons),
         })
         raise LearningGateError("Candidate failed deterministic screening: " + "; ".join(evaluation.reasons))
-    behavioral = evaluate_candidate_behavior(skill_id=skill_id, candidate_content=candidate,
-                                              cases=holdout_cases, adapter=adapter)
+    try:
+        behavioral = evaluate_candidate_behavior(skill_id=skill_id, candidate_content=candidate,
+                                                  cases=holdout_cases, adapter=adapter)
+    except Exception as exc:
+        ledger.append("skill_candidate_regression_failed", {
+            "task_id": task_id, "skill_id": skill_id, "candidate_digest": digest_text(candidate),
+            "error_type": type(exc).__name__, "error": str(exc)[:300],
+        })
+        ledger.append("skill_candidate_rejected", {
+            "task_id": task_id, "skill_id": skill_id, "candidate_digest": digest_text(candidate),
+            "reasons": ["regression evaluation failed or was invalid"],
+        })
+        raise LearningGateError("Candidate regression evaluation failed; no proposal was created") from exc
     ledger.append("skill_candidate_regression_evaluated", {
         "task_id": task_id, "skill_id": skill_id, "candidate_digest": digest_text(candidate),
         "evaluation": behavioral.as_dict(),
