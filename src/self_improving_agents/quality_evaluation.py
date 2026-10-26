@@ -10,7 +10,6 @@ from .ollama import OllamaAdapter
 from .learning import load_cases
 from .audit import AuditLedger
 
-
 _ABSTENTION_MARKERS = (
     "i cannot help", "i can't help", "i cannot provide", "i can't provide",
     "i am unable to", "i'm unable to", "i won't provide", "i will not provide",
@@ -48,7 +47,9 @@ def evaluate_outputs(*, cases: list[dict[str, Any]], skill_root: str | Path,
     if not cases:
         raise ValueError("A non-empty frozen evaluation dataset is required")
     results = []
-    execution_successes = required_passes = forbidden_violations = 0
+    execution_successes = 0
+    required_case_count = required_passes = 0
+    forbidden_case_count = forbidden_violations = 0
     abstention_cases = abstention_correct = routing_cases = routing_correct = 0
     for index, case in enumerate(cases, 1):
         case_id = case.get("case_id", str(index))
@@ -77,10 +78,13 @@ def evaluate_outputs(*, cases: list[dict[str, Any]], skill_root: str | Path,
             error = f"{type(exc).__name__}: {str(exc)[:300]}"
         required_missing = [x for x in must_include if x.casefold() not in output.casefold()]
         forbidden_found = [x for x in must_not_include if x.casefold() in output.casefold()]
-        required_ok, forbidden_ok = not required_missing, not forbidden_found
         execution_successes += int(execution_ok)
-        required_passes += int(required_ok)
-        forbidden_violations += int(not forbidden_ok)
+        if must_include:
+            required_case_count += 1
+            required_passes += int(not required_missing)
+        if must_not_include:
+            forbidden_case_count += 1
+            forbidden_violations += int(bool(forbidden_found))
         if expected_abstain:
             abstention_cases += 1
             abstention_correct += int(_has_abstention(output))
@@ -101,8 +105,10 @@ def evaluate_outputs(*, cases: list[dict[str, Any]], skill_root: str | Path,
         "metric_scope": "string assertions and selected-skill membership only; not semantic correctness, calibration, or safety proof",
         "case_count": count,
         "execution_success_rate": round(execution_successes / count, 4),
-        "required_phrase_pass_rate": round(required_passes / count, 4),
-        "forbidden_phrase_violation_rate": round(forbidden_violations / count, 4),
+        "required_phrase_case_count": required_case_count,
+        "required_phrase_pass_rate": round(required_passes / required_case_count, 4) if required_case_count else None,
+        "forbidden_phrase_case_count": forbidden_case_count,
+        "forbidden_phrase_violation_rate": round(forbidden_violations / forbidden_case_count, 4) if forbidden_case_count else None,
         "routing_case_count": routing_cases,
         "routing_label_recall": round(routing_correct / routing_cases, 4) if routing_cases else None,
         "abstention_case_count": abstention_cases,
@@ -112,26 +118,25 @@ def evaluate_outputs(*, cases: list[dict[str, Any]], skill_root: str | Path,
 
 
 def _evaluate_thresholds(report: dict[str, Any], thresholds: dict[str, float]) -> dict[str, Any]:
-    metric_for_threshold = {
+    mapping = {
         "minimum_execution_success_rate": ("execution_success_rate", "min"),
         "minimum_required_phrase_pass_rate": ("required_phrase_pass_rate", "min"),
         "maximum_forbidden_phrase_violation_rate": ("forbidden_phrase_violation_rate", "max"),
         "minimum_routing_label_recall": ("routing_label_recall", "min"),
         "minimum_abstention_marker_recall": ("abstention_marker_recall", "min"),
     }
-    results = {}
+    checks = {}
     for name, threshold in thresholds.items():
-        metric, direction = metric_for_threshold[name]
+        metric, direction = mapping[name]
         actual = report.get(metric)
         if actual is None:
-            passed = False
-            reason = "metric has no eligible cases"
+            passed, reason = False, "metric has no eligible cases"
         else:
             passed = actual >= threshold if direction == "min" else actual <= threshold
             reason = None if passed else f"{metric}={actual} does not meet {name}={threshold}"
-        results[name] = {"metric": metric, "threshold": threshold, "actual": actual,
-                         "passed": passed, "reason": reason}
-    return {"passed": all(item["passed"] for item in results.values()), "checks": results}
+        checks[name] = {"metric": metric, "threshold": threshold, "actual": actual,
+                        "passed": passed, "reason": reason}
+    return {"passed": all(item["passed"] for item in checks.values()), "checks": checks}
 
 
 def evaluate_file(cases_path: str | Path, skill_root: str | Path, audit_path: str | Path,
@@ -160,7 +165,7 @@ def evaluate_file(cases_path: str | Path, skill_root: str | Path, audit_path: st
             "cases_digest": case_digest, "thresholds_digest": threshold_digest,
             "gate_passed": report["gate"]["passed"],
             "metrics": {key: value for key, value in report.items()
-                        if key.endswith("_rate") or key.endswith("_recall") or key == "case_count"},
+                        if key.endswith("_rate") or key.endswith("_recall") or key.endswith("_count")},
         })
     except Exception as exc:
         ledger.append("quality_evaluation_failed", {
