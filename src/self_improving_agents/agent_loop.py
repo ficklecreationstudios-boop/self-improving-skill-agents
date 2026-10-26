@@ -23,8 +23,7 @@ class AgentLoopResult:
 def _parse_json_response(raw: str) -> dict[str, Any] | None:
     candidate = raw.strip()
     if candidate.startswith("```") and candidate.endswith("```"):
-        lines = candidate.splitlines()
-        candidate = "\n".join(lines[1:-1]).strip()
+        candidate = "\n".join(candidate.splitlines()[1:-1]).strip()
     try:
         parsed = json.loads(candidate)
     except json.JSONDecodeError:
@@ -55,24 +54,22 @@ def run_agent_loop(task: Task, adapter: OllamaAdapter, registry: CapabilityRegis
         raw = adapter.generate(prompt)
         response = _parse_json_response(raw)
         if response is None:
-            return AgentLoopResult(raw, tuple(tool_calls), digest_text(task.text),
-                                   digest_text(raw), len(tool_calls), "non_json_treated_as_final")
+            return AgentLoopResult(raw, tuple(tool_calls), digest_text(task.text), digest_text(raw),
+                                   len(tool_calls), "non_json_treated_as_final")
         if response.get("type") == "final" and isinstance(response.get("answer"), str):
             answer = response["answer"]
             return AgentLoopResult(answer, tuple(tool_calls), digest_text(task.text),
                                    digest_text(answer), len(tool_calls), "final_answer")
         if response.get("type") != "tool_call":
-            return AgentLoopResult(raw, tuple(tool_calls), digest_text(task.text),
-                                   digest_text(raw), len(tool_calls), "invalid_response_treated_as_final")
+            return AgentLoopResult(raw, tuple(tool_calls), digest_text(task.text), digest_text(raw),
+                                   len(tool_calls), "invalid_response_treated_as_final")
         name, arguments = response.get("name"), response.get("arguments")
         if step >= max_steps:
-            return AgentLoopResult("Stopped: tool-call step limit reached; no further tools executed.",
-                                   tuple(tool_calls), digest_text(task.text), digest_text(
-                                       "Stopped: tool-call step limit reached; no further tools executed."),
+            stop = "Stopped: tool-call step limit reached; no further tools executed."
+            return AgentLoopResult(stop, tuple(tool_calls), digest_text(task.text), digest_text(stop),
                                    len(tool_calls), "step_limit")
         result = registry.invoke(name, arguments)
-        record = {"name": name, "arguments": arguments, "result": result}
-        tool_calls.append(record)
+        tool_calls.append({"name": name, "arguments": arguments, "result": result})
         history.append({"assistant_tool_call": {"name": name, "arguments": arguments},
                         "tool_result_untrusted": result})
     stop = "Stopped: tool-call step limit reached."
@@ -94,11 +91,6 @@ def run_agent_task(task: Task, registry: CapabilityRegistry, audit_path: str | P
         ledger.append("agent_task_failed", {"task_digest": digest_text(task.text),
                       "error_type": type(exc).__name__, "error": str(exc)[:500]})
         raise
-    ledger.append("agent_task_completed", {
-        "task_digest": result.task_digest, "output_digest": result.output_digest,
-        "tool_call_count": len(result.tool_calls), "tool_names": [call["name"] for call in result.tool_calls],
-        "steps": result.steps, "stop_reason": result.stop_reason,
-    })
     for index, call in enumerate(result.tool_calls, 1):
         ledger.append("agent_tool_invoked", {
             "task_digest": result.task_digest, "index": index, "name": call["name"],
@@ -106,4 +98,10 @@ def run_agent_task(task: Task, registry: CapabilityRegistry, audit_path: str | P
             "result_digest": digest_text(json.dumps(call["result"], sort_keys=True, ensure_ascii=False)),
             "ok": call["result"].get("ok", False),
         })
+    event_type = "agent_task_completed" if result.stop_reason == "final_answer" else "agent_task_stopped"
+    ledger.append(event_type, {
+        "task_digest": result.task_digest, "output_digest": result.output_digest,
+        "tool_call_count": len(result.tool_calls), "tool_names": [call["name"] for call in result.tool_calls],
+        "steps": result.steps, "stop_reason": result.stop_reason,
+    })
     return result
