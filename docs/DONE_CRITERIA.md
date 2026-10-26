@@ -4,10 +4,10 @@ This is the fixed completion checklist. A green unit-test run alone does not sat
 
 | Gate | Pass condition | Evidence required | Status |
 |---|---|---|---|
-| D0 Reproducible build | Pinned clean install and all tests pass on supported Python versions and Windows/Linux | [CI run 40347774146](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/actions/runs/40347774146), code commit `f9059457af966ca0673661f1d6c7784d8a411eb9` | **PASS for that code commit** |
+| D0 Reproducible build | Pinned clean install and all tests pass on supported Python versions and Windows/Linux | [CI run 40347774146](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/actions/runs/40347774146), code commit f9059457af966ca0673661f1d6c7784d8a411eb9 | **PASS for that code commit** |
 | D1 Task lifecycle | Request → route → generate → validate → deliver → audit, including failure/stopped states, tested end-to-end | Integration tests and recorded outputs | PARTIAL |
 | D2 Local-model integration | Real configured Ollama endpoint/model works; timeout, unreachable server, malformed response and model mismatch fail clearly | Live local integration run metadata | OPEN |
-| D3 Skill and tool security | Traversal, symlink escape, duplicate IDs, malformed metadata, oversized input and prompt-injection fixtures tested | Adversarial regression suite | PARTIAL |
+| D3 Skill and tool security | Traversal, symlink escape, duplicate IDs, malformed metadata, oversized input and prompt-injection fixtures tested | [D3 security PR](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/pull/2), [CI run 40377347096](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/actions/runs/40377347096), commit e892608b5117d197bbec50fdffefe3e655460578 | PARTIAL; adversarial fixtures pass, but prompt-injection resistance is not established |
 | D4 Governance | Inert proposals; signed approval binds exact proposal; stale/duplicate/unapproved/invalid-audit updates fail closed; interrupted transaction recovery tested | Governance tests and recovery evidence | PARTIAL |
 | D5 Audit durability | Tampering detected; invalid append blocked; concurrent writers serialized; crash recovery tested | Concurrency tests plus power-loss fault-injection results | PARTIAL |
 | D6 Self-improvement loop | Feedback produces candidate; structural and frozen regression checks gate proposal; failures audited; active skill unchanged | Lifecycle tests and independent evaluation | PARTIAL; behavioral checks are substring-based |
