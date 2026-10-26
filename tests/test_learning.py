@@ -53,8 +53,13 @@ def test_feedback_loop_creates_proposal_without_mutating_active_skill(tmp_path):
     assert proposal.skill_id == "demo" and proposal.proposal_digest
     assert target.read_text(encoding="utf-8") == current
     types = [json.loads(line)["type"] for line in ledger.path.read_text(encoding="utf-8").splitlines()]
-    assert types == ["user_feedback_recorded", "skill_candidate_evaluated",
-                     "skill_candidate_regression_evaluated", "skill_proposal_created"]
+    assert types == ["user_feedback_recorded", "skill_candidate_evaluation_preregistered",
+                     "skill_candidate_evaluated", "skill_candidate_regression_evaluated",
+                     "skill_proposal_created"]
+    prereg = json.loads(ledger.path.read_text(encoding="utf-8").splitlines()[1])
+    assert prereg["payload"]["holdout_cases_digest"]
+    assert prereg["payload"]["active_skill_digest"]
+    assert prereg["payload"]["metric_scope"].startswith("frozen substring")
 
 
 def test_feedback_loop_rejects_structurally_unsafe_candidate(tmp_path):
