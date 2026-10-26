@@ -5,7 +5,7 @@ This is the fixed completion checklist. A green unit-test run alone does not sat
 | Gate | Pass condition | Evidence required | Status |
 |---|---|---|---|
 | D0 Reproducible build | Pinned clean install and all tests pass on supported Python versions and Windows/Linux | [CI run 40347774146](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/actions/runs/40347774146), code commit `f9059457af966ca0673661f1d6c7784d8a411eb9` | **PASS for that code commit** |
-| D1 Task lifecycle | Request → route → generate → validate → deliver → audit, including failure/stopped states, tested end-to-end | Integration tests and recorded outputs | PARTIAL |
+| D1 Task lifecycle | Request → route → generate → validate → deliver → audit, including failure/stopped states, tested end-to-end | [D1 integration tests](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/blob/work/d1-lifecycle-evidence-20261026/tests/test_task_lifecycle.py), [CI run 40377048184](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/actions/runs/40377048184), commit `c4397376b8c33eb82bcadac1aef17165017364e6` | COMPLETE |
 | D2 Local-model integration | Real configured Ollama endpoint/model works; timeout, unreachable server, malformed response and model mismatch fail clearly | Live local integration run metadata | OPEN |
 | D3 Skill and tool security | Traversal, symlink escape, duplicate IDs, malformed metadata, oversized input and prompt-injection fixtures tested | Adversarial regression suite | PARTIAL |
 | D4 Governance | Inert proposals; signed approval binds exact proposal; stale/duplicate/unapproved/invalid-audit updates fail closed; interrupted transaction recovery tested | Governance tests and recovery evidence | PARTIAL |
