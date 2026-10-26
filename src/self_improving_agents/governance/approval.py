@@ -1,6 +1,7 @@
-"""Skill updates require a signed approval bound to the exact proposal."""
+"""Skill updates require signed approval and a recoverable transaction journal."""
 from pathlib import Path
 from datetime import datetime, timezone
+import json
 import os
 import re
 import tempfile
@@ -53,7 +54,20 @@ class Governance:
         return unique[0]
 
     @staticmethod
-    def _atomic_write(target: Path, content: str) -> None:
+    def _fsync_directory(path: Path) -> None:
+        if os.name == "nt":
+            return
+        try:
+            fd = os.open(path, os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        except OSError:
+            pass
+
+    @classmethod
+    def _atomic_write(cls, target: Path, content: str) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         fd, temp_name = tempfile.mkstemp(prefix=".skill-update-", suffix=".tmp", dir=target.parent)
         try:
@@ -62,12 +76,75 @@ class Governance:
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temp_name, target)
+            cls._fsync_directory(target.parent)
         except Exception:
             try:
                 os.unlink(temp_name)
             except OSError:
                 pass
             raise
+
+    def _write_journal(self, journal_path: Path, record: dict) -> None:
+        self._atomic_write(journal_path, json.dumps(record, sort_keys=True, indent=2) + "\n")
+
+    def recover_pending(self) -> list[str]:
+        """Recover interrupted updates before accepting another update."""
+        if not self.archive_root.exists():
+            return []
+        recovered: list[str] = []
+        for journal_path in sorted(self.archive_root.glob("*.txn.json")):
+            try:
+                record = json.loads(journal_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise GovernanceError(f"Cannot read transaction journal {journal_path.name}") from exc
+            if record.get("phase") in {"committed", "rolled_back"}:
+                continue
+            target = Path(record.get("target", "")).resolve()
+            archive = Path(record.get("archive", "")).resolve()
+            try:
+                target.relative_to(self.skill_root)
+                archive.relative_to(self.archive_root)
+            except ValueError as exc:
+                raise GovernanceError("Transaction journal path escapes configured roots") from exc
+            if not archive.is_file():
+                raise GovernanceError(f"Transaction archive is missing: {archive.name}")
+            old_content = archive.read_text(encoding="utf-8")
+            old_digest = digest_text(old_content)
+            if old_digest != record.get("old_digest"):
+                raise GovernanceError(f"Transaction archive digest mismatch: {archive.name}")
+            current = target.read_text(encoding="utf-8") if target.exists() else None
+            current_digest = digest_text(current) if current is not None else None
+            try:
+                audit_valid = self.audit.verify()
+                events = self.audit._events() if audit_valid else []
+            except Exception:
+                audit_valid, events = False, []
+            committed_event = any(
+                event.get("type") == "skill_update_applied"
+                and event.get("payload", {}).get("proposal_digest") == record.get("proposal_digest")
+                and event.get("payload", {}).get("new_digest") == record.get("new_digest")
+                for event in events
+            )
+            if audit_valid and committed_event:
+                if current_digest != record.get("new_digest"):
+                    raise GovernanceError(f"Committed skill does not match transaction journal: {target.name}")
+                record["phase"] = "committed"
+                self._write_journal(journal_path, record)
+                recovered.append(f"finalized:{record.get('skill_id')}")
+                continue
+            if current_digest in {record.get("new_digest"), None}:
+                self._atomic_write(target, old_content)
+            elif current_digest != old_digest:
+                raise GovernanceError(f"Skill changed outside the interrupted transaction: {target.name}")
+            if audit_valid:
+                self.audit.append("skill_update_recovered_rollback", {
+                    "skill_id": record.get("skill_id"), "proposal_digest": record.get("proposal_digest"),
+                    "journal": journal_path.name, "restored_digest": old_digest,
+                })
+            record["phase"] = "rolled_back"
+            self._write_journal(journal_path, record)
+            recovered.append(f"rolled_back:{record.get('skill_id')}")
+        return recovered
 
     def apply(self, proposal: Proposal, approval: Approval) -> Path:
         if self.approval_key is None or not verify_approval(approval, self.approval_key):
@@ -78,9 +155,9 @@ class Governance:
             raise GovernanceError("Proposal digest is invalid")
         if not proposal.proposed_content.strip():
             raise GovernanceError("Proposed skill content must not be empty")
+        self.recover_pending()
         if not self.audit.verify():
             raise GovernanceError("Audit ledger failed integrity verification; refusing skill update")
-
         target = self._find_target(proposal.skill_id)
         current = target.read_text(encoding="utf-8")
         if digest_text(current) != proposal.base_digest:
@@ -91,18 +168,33 @@ class Governance:
         archive = self.archive_root / f"{proposal.skill_id}.{stamp}.SKILL.md"
         with archive.open("x", encoding="utf-8", newline="\n") as stream:
             stream.write(current)
-
+            stream.flush()
+            os.fsync(stream.fileno())
+        self._fsync_directory(self.archive_root)
+        journal_path = self.archive_root / f"{proposal.skill_id}.{stamp}.txn.json"
+        record = {
+            "schema": 1, "phase": "prepared", "skill_id": proposal.skill_id,
+            "target": str(target), "archive": str(archive), "old_digest": digest_text(current),
+            "new_digest": digest_text(proposal.proposed_content), "proposal_digest": proposal.proposal_digest,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._write_journal(journal_path, record)
         try:
             self._atomic_write(target, proposal.proposed_content)
+            record["phase"] = "target_written"
+            self._write_journal(journal_path, record)
             self.audit.append("skill_update_applied", {
-                "skill_id": proposal.skill_id,
-                "proposal_digest": proposal.proposal_digest,
-                "approver": approval.approver,
-                "approval_signature_digest": digest_text(approval.signature),
-                "archive": str(archive),
-                "new_digest": digest_text(proposal.proposed_content),
+                "skill_id": proposal.skill_id, "proposal_digest": proposal.proposal_digest,
+                "approver": approval.approver, "approval_signature_digest": digest_text(approval.signature),
+                "archive": str(archive), "new_digest": digest_text(proposal.proposed_content),
+                "transaction_journal": str(journal_path),
             })
         except Exception:
             self._atomic_write(target, current)
             raise
+        record["phase"] = "committed"
+        try:
+            self._write_journal(journal_path, record)
+        except Exception as exc:
+            raise GovernanceError("Skill update and audit committed; journal finalization needs recovery") from exc
         return target

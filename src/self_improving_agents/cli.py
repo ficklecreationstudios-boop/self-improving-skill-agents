@@ -27,6 +27,8 @@ def main() -> None:
     ask = sub.add_parser("ask", help="Run a task using selected local skills")
     ask.add_argument("text"); ask.add_argument("--domain", default="general"); ask.add_argument("--skills", default="skills"); ask.add_argument("--audit", default="data/audit.jsonl")
     audit = sub.add_parser("verify-audit", help="Verify the hash-chain audit ledger"); audit.add_argument("--audit", default="data/audit.jsonl")
+    recover = sub.add_parser("recover", help="Recover interrupted skill updates from transaction journals")
+    recover.add_argument("--skills", default="skills"); recover.add_argument("--archive", default="data/skill-archive"); recover.add_argument("--audit", default="data/audit.jsonl")
     bench = sub.add_parser("benchmark", help="Compare skill context proxy")
     bench.add_argument("text"); bench.add_argument("--domain", default="general"); bench.add_argument("--skills", default="skills")
     proposal = sub.add_parser("propose", help="Create an inert, digest-bound skill-update proposal")
@@ -57,6 +59,9 @@ def main() -> None:
         print(result.output)
         print(json.dumps({"skills": result.skill_ids, "review": result.review.__dict__, "task_digest": result.task_digest, "output_digest": result.output_digest}, indent=2))
     elif args.command == "verify-audit": print("VALID" if AuditLedger(args.audit).verify() else "INVALID")
+    elif args.command == "recover":
+        results = Governance(args.skills, args.archive, AuditLedger(args.audit)).recover_pending()
+        print(json.dumps({"recovered": results, "audit_valid": AuditLedger(args.audit).verify()}, indent=2))
     elif args.command == "benchmark":
         from .benchmark import compare_context
         skills = discover_skills(args.skills); selected = select_skills(args.text, args.domain, skills)
@@ -93,25 +98,22 @@ def main() -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
         try:
             with destination.open("xb") as stream:
-                stream.write(secrets.token_bytes(32))
-                stream.flush()
-                os.fsync(stream.fileno())
-            if os.name != "nt":
-                destination.chmod(0o600)
+                stream.write(secrets.token_bytes(32)); stream.flush(); os.fsync(stream.fileno())
+            if os.name != "nt": destination.chmod(0o600)
         except FileExistsError:
             raise SystemExit("Refusing to overwrite an existing approval key")
         print(json.dumps({"status": "key_created", "path": str(destination),
                           "warning": "Protect this key outside the repository; anyone holding it can sign approvals."}, indent=2))
     elif args.command == "approve-proposal":
         key = read_approval_key(args.key_file)
-        data = json.loads(Path(args.proposal_file).read_text(encoding="utf-8"))
-        item = Proposal(**data)
+        item = Proposal(**json.loads(Path(args.proposal_file).read_text(encoding="utf-8")))
+        if item.sealed().proposal_digest != item.proposal_digest:
+            raise SystemExit("Proposal digest is invalid; refusing to sign")
         try:
             approval = sign_approval(Approval(item.proposal_digest, args.approver, True, args.reason), key)
         except ApprovalSignatureError as exc:
             raise SystemExit(str(exc)) from exc
-        destination = Path(args.approval_output)
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination = Path(args.approval_output); destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(json.dumps(approval.__dict__, indent=2), encoding="utf-8")
         print(json.dumps({"status": "signed_approval_created", "approval_file": str(destination),
                           "proposal_digest": item.proposal_digest}, indent=2))
@@ -120,8 +122,7 @@ def main() -> None:
         item = Proposal(**json.loads(Path(args.proposal_file).read_text(encoding="utf-8")))
         approval = Approval(**json.loads(Path(args.approval_file).read_text(encoding="utf-8")))
         ledger = AuditLedger(args.audit)
-        governance = Governance(args.skills, args.archive, ledger, approval_key=key)
-        target = governance.apply(item, approval)
+        target = Governance(args.skills, args.archive, ledger, approval_key=key).apply(item, approval)
         print(json.dumps({"status": "applied", "skill_id": item.skill_id, "path": str(target),
                           "proposal_digest": item.proposal_digest, "audit_valid": ledger.verify()}, indent=2))
 
