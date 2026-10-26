@@ -1,9 +1,11 @@
-"""Append-only JSONL hash-chain audit ledger."""
+"""Append-only JSONL hash-chain audit ledger with cross-process writer locking."""
 from __future__ import annotations
 import json
+import os
 from pathlib import Path
 from hashlib import sha256
 from datetime import datetime, timezone
+from contextlib import contextmanager
 
 
 class AuditIntegrityError(RuntimeError):
@@ -14,6 +16,33 @@ class AuditLedger:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.lock_path = self.path.with_name(self.path.name + ".lock")
+
+    @contextmanager
+    def _exclusive_lock(self):
+        """Serialize ledger reads/writes across processes on Windows and POSIX."""
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock_path.open("a+b") as lock_file:
+            if os.name == "nt":
+                import msvcrt
+                lock_file.seek(0, os.SEEK_END)
+                if lock_file.tell() == 0:
+                    lock_file.write(b"0")
+                    lock_file.flush()
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                try:
+                    yield
+                finally:
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     def _events(self) -> list[dict]:
         if not self.path.exists():
@@ -37,24 +66,26 @@ class AuditLedger:
         return sha256(canonical.encode("utf-8")).hexdigest()
 
     def append(self, event_type: str, payload: dict) -> dict:
-        if not self.verify():
-            raise AuditIntegrityError("Audit ledger failed integrity verification; refusing to append")
-        events = self._events()
-        previous = events[-1]["event_hash"] if events else "0" * 64
-        event = {
-            "seq": len(events) + 1,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "type": event_type,
-            "payload": payload,
-            "previous_hash": previous,
-        }
-        event["event_hash"] = self._hash_event(event)
-        with self.path.open("a", encoding="utf-8", newline="\n") as stream:
-            stream.write(json.dumps(event, sort_keys=True, ensure_ascii=False) + "\n")
-            stream.flush()
-        return event
+        with self._exclusive_lock():
+            if not self._verify_unlocked():
+                raise AuditIntegrityError("Audit ledger failed integrity verification; refusing to append")
+            events = self._events()
+            previous = events[-1]["event_hash"] if events else "0" * 64
+            event = {
+                "seq": len(events) + 1,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "type": event_type,
+                "payload": payload,
+                "previous_hash": previous,
+            }
+            event["event_hash"] = self._hash_event(event)
+            with self.path.open("a", encoding="utf-8", newline="\n") as stream:
+                stream.write(json.dumps(event, sort_keys=True, ensure_ascii=False) + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            return event
 
-    def verify(self) -> bool:
+    def _verify_unlocked(self) -> bool:
         previous = "0" * 64
         try:
             events = self._events()
@@ -71,3 +102,7 @@ class AuditLedger:
                 return False
             previous = claimed
         return True
+
+    def verify(self) -> bool:
+        with self._exclusive_lock():
+            return self._verify_unlocked()
