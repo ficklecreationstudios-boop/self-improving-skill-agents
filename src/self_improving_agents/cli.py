@@ -11,6 +11,7 @@ from .agents.review import propose_skill_update
 from .governance.approval import Governance
 from .approval_auth import sign_approval, validate_key, ApprovalSignatureError
 from .learning import create_candidate_proposal, write_proposal, load_cases, LearningGateError
+from .quality_evaluation import evaluate_file
 from .ollama import OllamaAdapter
 
 
@@ -32,6 +33,9 @@ def main() -> None:
     agent.add_argument("text"); agent.add_argument("--workspace", default="."); agent.add_argument("--skills", default="skills")
     agent.add_argument("--domain", default="general"); agent.add_argument("--audit", default="data/audit.jsonl")
     agent.add_argument("--max-steps", type=int, default=4)
+    evaluate = sub.add_parser("evaluate-quality", help="Evaluate model outputs on a frozen JSONL case file")
+    evaluate.add_argument("--cases", required=True); evaluate.add_argument("--skills", default="skills")
+    evaluate.add_argument("--audit", default="data/evaluation-audit.jsonl"); evaluate.add_argument("--output", required=True)
     audit = sub.add_parser("verify-audit", help="Verify the hash-chain audit ledger"); audit.add_argument("--audit", default="data/audit.jsonl")
     recover = sub.add_parser("recover", help="Recover interrupted skill updates from transaction journals")
     recover.add_argument("--skills", default="skills"); recover.add_argument("--archive", default="data/skill-archive"); recover.add_argument("--audit", default="data/audit.jsonl")
@@ -66,8 +70,7 @@ def main() -> None:
         print(json.dumps({"skills": result.skill_ids, "review": result.review.__dict__, "task_digest": result.task_digest, "output_digest": result.output_digest}, indent=2))
     elif args.command == "agent":
         try:
-            all_skills = discover_skills(args.skills)
-            selected = select_skills(args.text, args.domain, all_skills)
+            selected = select_skills(args.text, args.domain, discover_skills(args.skills))
             result = run_agent_task(Task(args.text, args.domain), CapabilityRegistry(args.workspace),
                                     args.audit, OllamaAdapter(), max_steps=args.max_steps, skills=selected)
         except (RuntimeError, ValueError) as exc:
@@ -77,6 +80,13 @@ def main() -> None:
                           "tool_call_count": len(result.tool_calls), "tool_names": [call["name"] for call in result.tool_calls],
                           "steps": result.steps, "stop_reason": result.stop_reason,
                           "task_digest": result.task_digest, "output_digest": result.output_digest}, indent=2))
+    elif args.command == "evaluate-quality":
+        try:
+            report = evaluate_file(args.cases, args.skills, args.audit, OllamaAdapter(), args.output)
+        except (RuntimeError, ValueError, OSError) as exc:
+            raise SystemExit(str(exc)) from exc
+        print(json.dumps({key: value for key, value in report.items() if key != "cases"}, indent=2))
+        print(f"Full per-case report written to {args.output}")
     elif args.command == "verify-audit": print("VALID" if AuditLedger(args.audit).verify() else "INVALID")
     elif args.command == "recover":
         results = Governance(args.skills, args.archive, AuditLedger(args.audit)).recover_pending()

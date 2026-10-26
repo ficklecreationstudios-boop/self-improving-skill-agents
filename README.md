@@ -23,11 +23,17 @@ PYTHONPATH=src python -m self_improving_agents.cli --help
 ```
 
 ## Bounded tool agent
-The tool loop is opt-in. It can calculate arithmetic and read/search only inside the explicitly configured workspace:
 ```powershell
-skill-agents agent "Find where this project defines its audit event format" --workspace . --max-steps 4
+skill-agents agent "Find where this project defines its audit event format" --workspace . --skills skills --max-steps 4
 ```
-It has no host shell or write capability. Treat the workspace as intentionally disclosed to the agent. This is application-level least privilege, not an OS sandbox against a hostile local process.
+It uses selected skill references and only the allowlisted calculator, read-only file reader, and workspace search. This is application-level least privilege, not an OS sandbox against a hostile local process.
+
+## Quality evaluation
+Prepare and freeze a JSONL dataset with `task`, optional `domain`, `must_include`, `must_not_include`, `expected_abstain`, and `expected_skill_id`. Then run:
+```powershell
+skill-agents evaluate-quality --cases eval/my_frozen_cases.jsonl --skills skills --audit data/evaluation-audit.jsonl --output data/reports/evaluation.json
+```
+The scorer reports execution, phrase, routing-label, and abstention-marker metrics. These are diagnostics, not semantic correctness or safety proof. Keep a separate untouched holdout for final evaluation.
 
 ## Approval-key workflow
 Create a random key file once and protect it outside version control:
@@ -48,7 +54,7 @@ With a local Ollama model configured, use a frozen JSONL regression case file:
 ```powershell
 skill-agents learn-from-feedback --skill-id software_engineering --task-id task-001 --task "Debug a failing test" --output-text "The previous response missed the root cause" --rating 2 --feedback "Check the actual failure and include a regression test" --holdout eval/my_frozen_cases.jsonl --proposal-output data/proposals/software_engineering.json
 ```
-Each case contains `case_id`, `task`, and optional `must_include` and `must_not_include` string lists. Every case is run against the candidate; any failed assertion blocks proposal creation. Freeze cases before tuning and keep a separate independent holdout. Simple substring checks can be gamed and do not replace human or semantic evaluation.
+Every case is run against the candidate; any failed substring assertion blocks proposal creation. Freeze cases before tuning and keep a separate independent holdout.
 
 ## Live local-model test
 On the machine running Ollama, set `OLLAMA_MODEL` and run `RUN_OLLAMA_INTEGRATION=1 pytest -q tests/test_ollama_live.py`. CI deliberately does not claim to have tested your local model.
