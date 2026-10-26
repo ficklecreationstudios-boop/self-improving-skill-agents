@@ -57,7 +57,7 @@ Limitations: the prompt-injection fixture checks framing of untrusted content; i
 - Integration PR: [#9](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/pull/9)
 - Current CI run: [40388466130](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/actions/runs/40388466130)
 - Matrix: Windows/Linux × Python 3.11/3.14; all four jobs succeeded.
-- Each job reported **84 passed, 5 skipped**. The skips include opt-in live Ollama/security tests that cannot access the owner's local model from hosted CI.
+- Latest current-head run: [40389307141](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/actions/runs/40389307141). All four jobs succeeded; each reported **87 passed, 6 skipped**. The skips include opt-in live Ollama/security tests that cannot access the owner's local model from hosted CI.
 - Added multiprocess audit-writer serialization coverage, key-ID-bound HMAC approval signatures, audit-ledger key revocation, candidate holdout preregistration, abstention precision metrics, and stricter malformed capability handling.
 - Added [fixed D3–D11 acceptance criteria](ACCEPTANCE_D3_D11.md) and a [clean-machine operations runbook](OPERATIONS_ACCEPTANCE.md).
 
