@@ -78,6 +78,25 @@ class Governance:
         except ApprovalSignatureError as exc:
             raise GovernanceError(str(exc)) from exc
 
+    def revoke_approval_key(self, key_id: str, reason: str) -> dict:
+        """Record key revocation under the same governance lock used by apply()."""
+        if not isinstance(key_id, str) or not re.fullmatch(r"[0-9a-f]{64}", key_id):
+            raise GovernanceError("key_id must be a full 64-character lowercase SHA-256 identifier")
+        if not isinstance(reason, str) or not reason.strip():
+            raise GovernanceError("Revocation reason must be non-empty")
+        with self._update_lock():
+            if not self.audit.verify():
+                raise GovernanceError("Audit ledger is invalid; refusing to revoke key")
+            events = self.audit._events()
+            if any(event.get("type") == "approval_key_revoked"
+                   and event.get("payload", {}).get("key_id") == key_id for event in events):
+                return {"status": "already_revoked", "key_id": key_id}
+            event = self.audit.append("approval_key_revoked", {
+                "key_id": key_id, "reason": reason.strip(),
+            })
+            return {"status": "key_revoked", "key_id": key_id,
+                    "audit_seq": event["seq"], "audit_valid": self.audit.verify()}
+
     def _find_target(self, skill_id: str) -> Path:
         if not re.fullmatch(r"[a-zA-Z0-9_-]+", skill_id):
             raise GovernanceError("Unsafe skill id")
