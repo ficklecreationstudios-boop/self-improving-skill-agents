@@ -7,7 +7,7 @@ from .skills import discover_skills, select_skills
 from .audit import AuditLedger
 from .agents.review import propose_skill_update
 from .governance.approval import Governance
-from .learning import create_candidate_proposal, write_proposal, LearningGateError
+from .learning import create_candidate_proposal, write_proposal, load_cases, LearningGateError
 from .ollama import OllamaAdapter
 
 def main() -> None:
@@ -20,11 +20,12 @@ def main() -> None:
     bench.add_argument("text"); bench.add_argument("--domain", default="general"); bench.add_argument("--skills", default="skills")
     proposal = sub.add_parser("propose", help="Create an inert, digest-bound skill-update proposal")
     proposal.add_argument("skill_id"); proposal.add_argument("proposed_content_file"); proposal.add_argument("--rationale", required=True); proposal.add_argument("--skills", default="skills"); proposal.add_argument("--output")
-    learn = sub.add_parser("learn-from-feedback", help="Use local Ollama to create a screened, inert skill proposal")
+    learn = sub.add_parser("learn-from-feedback", help="Generate and screen an inert skill proposal using local Ollama")
     learn.add_argument("--skill-id", required=True); learn.add_argument("--task-id", required=True)
     learn.add_argument("--task", required=True); learn.add_argument("--output-text", required=True)
     learn.add_argument("--rating", required=True, type=int); learn.add_argument("--feedback", required=True)
     learn.add_argument("--skills", default="skills"); learn.add_argument("--audit", default="data/audit.jsonl")
+    learn.add_argument("--holdout", required=True, help="Path to frozen JSONL regression cases")
     learn.add_argument("--proposal-output", required=True); learn.add_argument("--max-chars", type=int, default=20000)
     apply = sub.add_parser("apply-proposal", help="Apply a proposal after explicit human approval")
     apply.add_argument("proposal_file"); apply.add_argument("--skills", default="skills"); apply.add_argument("--archive", default="data/skill-archive"); apply.add_argument("--audit", default="data/audit.jsonl"); apply.add_argument("--approver", required=True); apply.add_argument("--approve", action="store_true", required=True); apply.add_argument("--reason", default="")
@@ -50,19 +51,20 @@ def main() -> None:
         print(json.dumps({"proposal_file": str(destination), "proposal_digest": item.proposal_digest, "status": "proposal_created_not_applied"}, indent=2))
     elif args.command == "learn-from-feedback":
         try:
-            item, evaluation = create_candidate_proposal(
+            item, structural, behavioral = create_candidate_proposal(
                 skill_id=args.skill_id, skill_root=args.skills, task_id=args.task_id,
                 task_text=args.task, output_text=args.output_text, rating=args.rating,
                 feedback=args.feedback, adapter=OllamaAdapter(), ledger=AuditLedger(args.audit),
-                max_chars=args.max_chars,
+                holdout_cases=load_cases(args.holdout), max_chars=args.max_chars,
             )
         except LearningGateError as exc:
             raise SystemExit(str(exc)) from exc
         destination = write_proposal(item, args.proposal_output)
         print(json.dumps({
             "status": "proposal_created_not_applied", "proposal_file": str(destination),
-            "proposal_digest": item.proposal_digest, "screening": evaluation.as_dict(),
-            "warning": "Mechanical screening is not semantic quality validation; independent evaluation and human approval remain required.",
+            "proposal_digest": item.proposal_digest, "structural_screening": structural.as_dict(),
+            "regression_screening": behavioral.as_dict(),
+            "warning": "Substring regression checks are not semantic quality validation; independent review and human approval remain required.",
         }, indent=2))
     elif args.command == "apply-proposal":
         data = json.loads(Path(args.proposal_file).read_text(encoding="utf-8"))

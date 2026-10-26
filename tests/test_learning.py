@@ -1,11 +1,9 @@
 import json
 import pytest
-
 from self_improving_agents.audit import AuditLedger
 from self_improving_agents.learning import (
     LearningGateError, create_candidate_proposal, evaluate_candidate, record_feedback
 )
-from self_improving_agents.ollama import OllamaAdapter
 
 
 def test_feedback_requires_valid_fields_and_is_audited(tmp_path):
@@ -35,24 +33,31 @@ def test_feedback_loop_creates_proposal_without_mutating_active_skill(tmp_path):
     target = folder / "SKILL.md"; target.write_text(current, encoding="utf-8")
     class FakeAdapter:
         configured = True
+        def __init__(self): self.calls = 0
         def generate(self, prompt):
-            assert "USER_FEEDBACK" in prompt
-            return "---\nid: demo\nname: Demo\ndomain: general\ntags: []\n---\nUse clear steps and state uncertainty."
+            self.calls += 1
+            if self.calls == 1:
+                assert "USER_FEEDBACK" in prompt
+                return "---\nid: demo\nname: Demo\ndomain: general\ntags: []\n---\nUse clear steps and state uncertainty."
+            assert "SKILL DOCUMENT" in prompt
+            return "Answer with a clear summary and state uncertainty."
+    cases = [{"case_id": "one", "task": "Explain", "must_include": ["clear summary"],
+              "must_not_include": ["I guarantee correctness"]}]
     ledger = AuditLedger(tmp_path / "audit.jsonl")
-    proposal, evaluation = create_candidate_proposal(
+    proposal, evaluation, behavioral = create_candidate_proposal(
         skill_id="demo", skill_root=root, task_id="task-1", task_text="Explain a topic",
         output_text="An explanation", rating=2, feedback="State uncertainty explicitly",
-        adapter=FakeAdapter(), ledger=ledger,
+        adapter=FakeAdapter(), ledger=ledger, holdout_cases=cases,
     )
-    assert evaluation.passed
-    assert proposal.skill_id == "demo"
-    assert proposal.proposal_digest
+    assert evaluation.passed and behavioral.passed
+    assert proposal.skill_id == "demo" and proposal.proposal_digest
     assert target.read_text(encoding="utf-8") == current
     types = [json.loads(line)["type"] for line in ledger.path.read_text(encoding="utf-8").splitlines()]
-    assert types == ["user_feedback_recorded", "skill_candidate_evaluated", "skill_proposal_created"]
+    assert types == ["user_feedback_recorded", "skill_candidate_evaluated",
+                     "skill_candidate_regression_evaluated", "skill_proposal_created"]
 
 
-def test_feedback_loop_rejects_candidate_without_writing_proposal(tmp_path):
+def test_feedback_loop_rejects_structurally_unsafe_candidate(tmp_path):
     root = tmp_path / "skills"; folder = root / "demo"; folder.mkdir(parents=True)
     current = "---\nid: demo\nname: Demo\ndomain: general\ntags: []\n---\nUse clear steps."
     target = folder / "SKILL.md"; target.write_text(current, encoding="utf-8")
@@ -64,9 +69,34 @@ def test_feedback_loop_rejects_candidate_without_writing_proposal(tmp_path):
     with pytest.raises(LearningGateError, match="failed deterministic screening"):
         create_candidate_proposal(
             skill_id="demo", skill_root=root, task_id="task-2", task_text="Explain",
-            output_text="Bad answer", rating=1, feedback="wrong",
-            adapter=FakeAdapter(), ledger=ledger,
+            output_text="Bad answer", rating=1, feedback="wrong", adapter=FakeAdapter(),
+            ledger=ledger, holdout_cases=[{"task":"Explain","must_include":["clear"]}],
         )
     assert target.read_text(encoding="utf-8") == current
     assert any(json.loads(line)["type"] == "skill_candidate_rejected"
                for line in ledger.path.read_text(encoding="utf-8").splitlines())
+
+
+def test_feedback_loop_rejects_regression_failure_and_never_proposes(tmp_path):
+    root = tmp_path / "skills"; folder = root / "demo"; folder.mkdir(parents=True)
+    current = "---\nid: demo\nname: Demo\ndomain: general\ntags: []\n---\nUse clear steps."
+    target = folder / "SKILL.md"; target.write_text(current, encoding="utf-8")
+    class FakeAdapter:
+        configured = True
+        def __init__(self): self.calls = 0
+        def generate(self, _prompt):
+            self.calls += 1
+            return ("---\nid: demo\nname: Demo\ndomain: general\ntags: []\n---\nImproved steps."
+                    if self.calls == 1 else "No expected phrase here.")
+    ledger = AuditLedger(tmp_path / "audit.jsonl")
+    with pytest.raises(LearningGateError, match="failed regression gate"):
+        create_candidate_proposal(
+            skill_id="demo", skill_root=root, task_id="task-3", task_text="Explain",
+            output_text="Bad answer", rating=1, feedback="Improve", adapter=FakeAdapter(),
+            ledger=ledger, holdout_cases=[{"case_id":"required","task":"Explain",
+                                           "must_include":["specific required phrase"]}],
+        )
+    assert target.read_text(encoding="utf-8") == current
+    types = [json.loads(line)["type"] for line in ledger.path.read_text(encoding="utf-8").splitlines()]
+    assert "skill_proposal_created" not in types
+    assert "skill_candidate_rejected" in types
