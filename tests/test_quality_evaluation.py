@@ -23,6 +23,8 @@ def test_output_evaluation_reports_limited_metrics_without_claiming_safety(tmp_p
     assert report["case_count"] == 2
     assert report["execution_success_rate"] == 1.0
     assert report["abstention_marker_recall"] == 1.0
+    assert report["abstention_marker_precision"] == 0.5
+    assert report["abstention_marker_detection_count"] == 2
     assert report["forbidden_phrase_violation_rate"] == 0.5
     assert "not semantic correctness" in report["metric_scope"]
 
@@ -39,6 +41,7 @@ def test_output_evaluation_reports_domain_metrics_and_wilson_intervals(tmp_path)
     assert report["domain_metrics"]["general"]["case_count"] == 1
     assert report["domain_metrics"]["general"]["required_phrase_pass_rate"] == 1.0
     assert report["domain_metrics"]["safety"]["abstention_marker_recall"] == 1.0
+    assert report["domain_metrics"]["safety"]["abstention_marker_precision"] == 1.0
     interval = report["metric_confidence_intervals_95"]["execution_success_rate"]
     assert interval["successes"] == 2 and interval["trials"] == 2
     assert interval["lower_95"] < interval["estimate"] <= interval["upper_95"]
