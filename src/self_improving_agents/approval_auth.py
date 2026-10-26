@@ -27,8 +27,12 @@ def approval_message(approval: Approval) -> bytes:
 
 def sign_approval(approval: Approval, key: bytes) -> Approval:
     validate_key(key)
-    if not approval.approved:
+    if approval.approved is not True:
         raise ApprovalSignatureError("Only explicitly approved records can be signed")
+    if not approval.approver.strip():
+        raise ApprovalSignatureError("Approver label must be non-empty")
+    if not approval.proposal_digest or not approval.reason.strip():
+        raise ApprovalSignatureError("Proposal digest and approval reason must be non-empty")
     signature = hmac.new(key, approval_message(approval), hashlib.sha256).hexdigest()
     return Approval(approval.proposal_digest, approval.approver, approval.approved,
                     approval.reason, signature)
@@ -36,7 +40,7 @@ def sign_approval(approval: Approval, key: bytes) -> Approval:
 
 def verify_approval(approval: Approval, key: bytes) -> bool:
     validate_key(key)
-    if not approval.approved or not approval.approver.strip() or not approval.signature:
+    if approval.approved is not True or not approval.approver.strip() or not approval.reason.strip() or not approval.signature:
         return False
     expected = hmac.new(key, approval_message(Approval(
         approval.proposal_digest, approval.approver, approval.approved, approval.reason
