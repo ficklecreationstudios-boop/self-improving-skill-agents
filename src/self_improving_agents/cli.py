@@ -29,7 +29,8 @@ def main() -> None:
     ask = sub.add_parser("ask", help="Run a task using selected local skills")
     ask.add_argument("text"); ask.add_argument("--domain", default="general"); ask.add_argument("--skills", default="skills"); ask.add_argument("--audit", default="data/audit.jsonl")
     agent = sub.add_parser("agent", help="Run a bounded agent loop with allowlisted local capabilities")
-    agent.add_argument("text"); agent.add_argument("--workspace", default="."); agent.add_argument("--audit", default="data/audit.jsonl")
+    agent.add_argument("text"); agent.add_argument("--workspace", default="."); agent.add_argument("--skills", default="skills")
+    agent.add_argument("--domain", default="general"); agent.add_argument("--audit", default="data/audit.jsonl")
     agent.add_argument("--max-steps", type=int, default=4)
     audit = sub.add_parser("verify-audit", help="Verify the hash-chain audit ledger"); audit.add_argument("--audit", default="data/audit.jsonl")
     recover = sub.add_parser("recover", help="Recover interrupted skill updates from transaction journals")
@@ -65,12 +66,15 @@ def main() -> None:
         print(json.dumps({"skills": result.skill_ids, "review": result.review.__dict__, "task_digest": result.task_digest, "output_digest": result.output_digest}, indent=2))
     elif args.command == "agent":
         try:
-            result = run_agent_task(Task(args.text), CapabilityRegistry(args.workspace),
-                                    args.audit, OllamaAdapter(), max_steps=args.max_steps)
+            all_skills = discover_skills(args.skills)
+            selected = select_skills(args.text, args.domain, all_skills)
+            result = run_agent_task(Task(args.text, args.domain), CapabilityRegistry(args.workspace),
+                                    args.audit, OllamaAdapter(), max_steps=args.max_steps, skills=selected)
         except (RuntimeError, ValueError) as exc:
             raise SystemExit(str(exc)) from exc
         print(result.output)
-        print(json.dumps({"tool_call_count": len(result.tool_calls), "tool_names": [call["name"] for call in result.tool_calls],
+        print(json.dumps({"skill_ids": [skill.skill_id for skill in selected],
+                          "tool_call_count": len(result.tool_calls), "tool_names": [call["name"] for call in result.tool_calls],
                           "steps": result.steps, "stop_reason": result.stop_reason,
                           "task_digest": result.task_digest, "output_digest": result.output_digest}, indent=2))
     elif args.command == "verify-audit": print("VALID" if AuditLedger(args.audit).verify() else "INVALID")
