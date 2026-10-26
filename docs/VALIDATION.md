@@ -16,6 +16,7 @@ Local evidence recorded from the owner's Windows environment (Python 3.14.8, Oll
 
 - Standard regression suite: **53 passed, 3 skipped in 9.12s**.
 - Opt-in live Ollama integration test: **1 passed in 21.23s**. This establishes that the configured local model returned non-empty output, not that its answer was correct or safe.
+- Repeat opt-in live Ollama integration test: **1 passed in 28.19s**. This repeat also establishes only non-empty output from the configured local model, not answer correctness or safety.
 - Focused adapter suite: **9 passed** after adding invalid-JSON, timeout and model-not-found cases.
 - Invalid JSON, malformed response shape, HTTP 404/model-not-found, adapter timeout handling, and oversized prompt/output rejection have regression coverage.
 - A temporary local HTTP server delayed its response by 1.5 seconds; with a 0.2-second adapter timeout, the adapter raised a timeout error after approximately 0.29 seconds. This validates adapter timeout behavior against that temporary server, not a stalled Ollama inference.
