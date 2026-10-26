@@ -9,32 +9,43 @@ if (-not $env:OLLAMA_MODEL) {
 }
 
 $baseUrl = if ($env:OLLAMA_BASE_URL) { $env:OLLAMA_BASE_URL.TrimEnd("/") } else { "http://127.0.0.1:11434" }
+$configuredModel = $env:OLLAMA_MODEL
 Write-Host "Checking Ollama endpoint: $baseUrl"
 $tags = Invoke-RestMethod -Uri "$baseUrl/api/tags" -Method Get -TimeoutSec 8
 $available = @($tags.models | ForEach-Object { $_.name })
-if ($available -notcontains $env:OLLAMA_MODEL) {
-    Write-Host "Configured model '$env:OLLAMA_MODEL' was not found."
+if ($available -notcontains $configuredModel) {
+    Write-Host "Configured model '$configuredModel' was not found."
     Write-Host "Available local tags: $($available -join ', ')"
     throw "No model was downloaded or changed. Set OLLAMA_MODEL to an available tag."
 }
-Write-Host "Found configured model: $env:OLLAMA_MODEL"
+Write-Host "Found configured model: $configuredModel"
 
 python -m pip install -r requirements-test.lock
 if ($LASTEXITCODE -ne 0) { throw "Pinned test dependencies failed to install." }
 python -m pip install --no-build-isolation -e .
 if ($LASTEXITCODE -ne 0) { throw "Editable package install failed." }
 
-python -m pytest -q
-if ($LASTEXITCODE -ne 0) { throw "Regression suite failed." }
-
+# Keep live-model settings out of the ordinary regression suite so it remains deterministic.
+$hadModel = Test-Path Env:OLLAMA_MODEL
+$previousModel = $env:OLLAMA_MODEL
+$hadFlag = Test-Path Env:RUN_OLLAMA_INTEGRATION
 $previousFlag = $env:RUN_OLLAMA_INTEGRATION
 try {
+    Remove-Item Env:OLLAMA_MODEL -ErrorAction SilentlyContinue
+    Remove-Item Env:RUN_OLLAMA_INTEGRATION -ErrorAction SilentlyContinue
+    python -m pytest -q
+    if ($LASTEXITCODE -ne 0) { throw "Regression suite failed." }
+
+    $env:OLLAMA_MODEL = $configuredModel
     $env:RUN_OLLAMA_INTEGRATION = "1"
     python -m pytest -q tests/test_ollama_live.py
     if ($LASTEXITCODE -ne 0) { throw "Live Ollama integration test failed." }
 }
 finally {
-    $env:RUN_OLLAMA_INTEGRATION = $previousFlag
+    if ($hadModel) { $env:OLLAMA_MODEL = $previousModel }
+    else { Remove-Item Env:OLLAMA_MODEL -ErrorAction SilentlyContinue }
+    if ($hadFlag) { $env:RUN_OLLAMA_INTEGRATION = $previousFlag }
+    else { Remove-Item Env:RUN_OLLAMA_INTEGRATION -ErrorAction SilentlyContinue }
 }
 
 Write-Host "Local checks passed. This does not constitute independent quality, safety, or production-readiness approval."
