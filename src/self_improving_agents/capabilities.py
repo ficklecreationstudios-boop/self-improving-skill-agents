@@ -16,11 +16,8 @@ class CapabilityRegistry:
         if not self.workspace.is_dir():
             raise CapabilityError("Workspace must be an existing directory")
         self.max_file_bytes = max_file_bytes
-        self._tools = {
-            "calculator": self._calculator,
-            "read_text_file": self._read_text_file,
-            "search_text": self._search_text,
-        }
+        self._tools = {"calculator": self._calculator, "read_text_file": self._read_text_file,
+                       "search_text": self._search_text}
 
     @property
     def descriptions(self) -> list[dict[str, str]]:
@@ -36,14 +33,15 @@ class CapabilityRegistry:
         if not isinstance(arguments, dict):
             return {"ok": False, "error": "Tool arguments must be a JSON object"}
         try:
-            value = self._tools[name](arguments)
-            return {"ok": True, "result": value}
+            return {"ok": True, "result": self._tools[name](arguments)}
         except CapabilityError as exc:
             return {"ok": False, "error": str(exc)}
 
     def _contained_file(self, relative: str) -> Path:
         if not isinstance(relative, str) or not relative.strip():
             raise CapabilityError("path must be a non-empty relative string")
+        if Path(relative).is_absolute():
+            raise CapabilityError("absolute paths are not accepted; use a workspace-relative path")
         candidate = (self.workspace / relative).resolve(strict=True)
         try:
             candidate.relative_to(self.workspace)
@@ -110,7 +108,6 @@ class CapabilityRegistry:
         except SyntaxError as exc:
             raise CapabilityError("Invalid arithmetic expression") from exc
         count = 0
-
         def evaluate(current: ast.AST, depth: int = 0) -> float | int:
             nonlocal count
             count += 1
@@ -142,6 +139,4 @@ class CapabilityRegistry:
             if not isinstance(value, (int, float)) or abs(value) > 1e15 or (isinstance(value, float) and not math.isfinite(value)):
                 raise CapabilityError("Arithmetic result exceeds numeric limits")
             return value
-
-        result = evaluate(node)
-        return {"value": result, "expression": expression}
+        return {"value": evaluate(node), "expression": expression}
