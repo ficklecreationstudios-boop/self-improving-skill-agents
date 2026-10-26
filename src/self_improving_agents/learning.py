@@ -102,6 +102,18 @@ def evaluate_candidate_behavior(*, skill_id: str, candidate_content: str,
                                 cases: list[dict[str, Any]], adapter: OllamaAdapter) -> BehavioralEvaluation:
     if not cases:
         raise LearningGateError("A non-empty frozen regression case file is required")
+    # Validate all IDs before inference so duplicate cases cannot partially consume model calls.
+    preflight_ids: set[str] = set()
+    for index, case in enumerate(cases, 1):
+        if not isinstance(case, dict):
+            raise LearningGateError(f"regression case at index {index} must be an object")
+        case_id = case.get("case_id", str(index))
+        if not isinstance(case_id, (str, int)) or isinstance(case_id, bool) or not str(case_id).strip():
+            raise LearningGateError(f"case at index {index}: case_id must be a non-empty string or integer")
+        normalized_id = str(case_id)
+        if normalized_id in preflight_ids:
+            raise LearningGateError(f"duplicate regression case_id: {normalized_id}")
+        preflight_ids.add(normalized_id)
     results = []
     seen_case_ids: set[str] = set()
     for index, case in enumerate(cases, 1):
