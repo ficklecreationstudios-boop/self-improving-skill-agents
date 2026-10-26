@@ -37,7 +37,7 @@ def test_rejects_unapproved_proposal(tmp_path):
 def test_rejects_stale_base_even_with_valid_signed_approval(tmp_path):
     target, _, gov = setup_governance(tmp_path)
     proposal = propose_skill_update("demo", target.read_text(), "new", "why")
-    approval = gov.issue_approval(proposal, "reviewer", True)
+    approval = gov.issue_approval(proposal, "reviewer", True, "reviewed stale-base test")
     target.write_text("changed since proposal")
     with pytest.raises(GovernanceError, match="Stale proposal"):
         gov.apply(proposal, approval)
@@ -49,7 +49,7 @@ def test_wrong_key_cannot_authorize_update(tmp_path):
     signed_by_other_key = Governance(tmp_path / "skills", tmp_path / "archive",
                                      AuditLedger(tmp_path / "audit.jsonl"),
                                      approval_key=b"different-key-material-32-bytes-minimum!!")
-    approval = signed_by_other_key.issue_approval(proposal, "reviewer", True)
+    approval = signed_by_other_key.issue_approval(proposal, "reviewer", True, "reviewed")
     with pytest.raises(GovernanceError, match="signature"):
         gov.apply(proposal, approval)
 
@@ -58,4 +58,4 @@ def test_short_key_is_rejected(tmp_path):
     target, _, gov = setup_governance(tmp_path, key=b"short")
     proposal = propose_skill_update("demo", target.read_text(), "new", "why")
     with pytest.raises(GovernanceError, match="32 random bytes"):
-        gov.issue_approval(proposal, "reviewer", True)
+        gov.issue_approval(proposal, "reviewer", True, "reviewed")
