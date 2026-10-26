@@ -2,7 +2,7 @@
 import argparse, json
 from pathlib import Path
 from .models import Task, Proposal
-from .orchestrator import run_task
+from .orchestrator import run_task, ModelNotConfiguredError
 from .skills import discover_skills, select_skills
 from .audit import AuditLedger
 from .agents.review import propose_skill_update
@@ -31,7 +31,10 @@ def main() -> None:
     apply.add_argument("proposal_file"); apply.add_argument("--skills", default="skills"); apply.add_argument("--archive", default="data/skill-archive"); apply.add_argument("--audit", default="data/audit.jsonl"); apply.add_argument("--approver", required=True); apply.add_argument("--approve", action="store_true", required=True); apply.add_argument("--reason", default="")
     args = parser.parse_args()
     if args.command == "ask":
-        result = run_task(Task(args.text, args.domain), args.skills, args.audit)
+        try:
+            result = run_task(Task(args.text, args.domain), args.skills, args.audit)
+        except ModelNotConfiguredError as exc:
+            raise SystemExit(str(exc)) from exc
         print(result.output)
         print(json.dumps({"skills": result.skill_ids, "review": result.review.__dict__, "task_digest": result.task_digest, "output_digest": result.output_digest}, indent=2))
     elif args.command == "verify-audit": print("VALID" if AuditLedger(args.audit).verify() else "INVALID")

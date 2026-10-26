@@ -5,13 +5,14 @@ Local-first Python framework for routing tasks to specialist agents, selectively
 ## Safety principles
 - Standard-library core; Ollama is optional and explicitly configured.
 - Skills and task text are untrusted data, never policy or tool permissions.
+- If no model is configured, a task is audited as not executed and the CLI exits; a configuration notice is never misrepresented as a model answer.
 - Feedback-driven learning creates a proposal only. It never applies a candidate automatically.
 - Candidate screening checks structure, target identity, size and a narrow known-risk phrase list.
-- A required JSONL regression suite tests candidate behavior using deterministic substring assertions. This is not semantic quality validation or a proof of safety.
+- A required JSONL regression suite tests candidate behavior using deterministic substring assertions. This is not semantic quality validation or proof of safety.
 - Applying a proposal requires explicit approval bound to the exact proposal digest.
 - Skill updates archive prior versions and emit a hash-chained audit event.
 - No shell, arbitrary Python, or host-tool execution is exposed to agents.
-- Hash chaining is tamper-evident, not a signature or immutable external storage.
+- Audit writes are serialized with a cross-process lock and fsync; hash chaining remains tamper-evident, not a signature or immutable external storage.
 
 ## Quick start (Python 3.11+)
 ```bash
@@ -21,6 +22,9 @@ pytest -q
 PYTHONPATH=src python -m self_improving_agents.cli --help
 ```
 
+## Optional local Ollama
+Set `OLLAMA_MODEL` and optionally `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`). No model is downloaded automatically.
+
 ## Feedback-driven proposal workflow
 With a local Ollama model configured, use a frozen JSONL regression case file:
 
@@ -28,7 +32,7 @@ With a local Ollama model configured, use a frozen JSONL regression case file:
 skill-agents learn-from-feedback --skill-id software_engineering --task-id task-001 --task "Debug a failing test" --output-text "The previous response missed the root cause" --rating 2 --feedback "Check the actual failure and include a regression test" --holdout eval/my_frozen_cases.jsonl --proposal-output data/proposals/software_engineering.json
 ```
 
-Each case contains `case_id`, `task`, and optional `must_include` and `must_not_include` string lists. The candidate is run against every case; any failed assertion blocks proposal creation. Freeze the cases before tuning and keep a separate independent holdout. Simple substring checks can be gamed and do not replace human or semantic evaluation.
+Each case contains `case_id`, `task`, and optional `must_include` and `must_not_include` string lists. Every case is run against the candidate; any failed assertion blocks proposal creation. Freeze cases before tuning and keep a separate independent holdout. Simple substring checks can be gamed and do not replace human or semantic evaluation.
 
 The active skill remains unchanged. Review the candidate and its audit events, then evaluate it independently before approval.
 
