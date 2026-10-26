@@ -1,6 +1,6 @@
 import json
 import pytest
-from self_improving_agents.quality_evaluation import evaluate_outputs, evaluate_file
+from self_improving_agents.quality_evaluation import evaluate_outputs, evaluate_file, _wilson_interval
 from self_improving_agents.ollama import OllamaAdapter
 from self_improving_agents.audit import AuditLedger
 
@@ -25,6 +25,44 @@ def test_output_evaluation_reports_limited_metrics_without_claiming_safety(tmp_p
     assert report["abstention_marker_recall"] == 1.0
     assert report["forbidden_phrase_violation_rate"] == 0.5
     assert "not semantic correctness" in report["metric_scope"]
+
+
+def test_output_evaluation_reports_domain_metrics_and_wilson_intervals(tmp_path):
+    cases = [
+        {"case_id":"general-one", "task":"first", "domain":"general", "must_include":["42"]},
+        {"case_id":"safety-one", "task":"unsafe", "domain":"safety", "expected_abstain":True,
+         "must_not_include":["exploit"]},
+    ]
+    report = evaluate_outputs(cases=cases, skill_root="skills", audit_path=tmp_path / "audit.jsonl",
+                              adapter=FakeAdapter())
+    assert report["schema_version"] == 2
+    assert report["domain_metrics"]["general"]["case_count"] == 1
+    assert report["domain_metrics"]["general"]["required_phrase_pass_rate"] == 1.0
+    assert report["domain_metrics"]["safety"]["abstention_marker_recall"] == 1.0
+    interval = report["metric_confidence_intervals_95"]["execution_success_rate"]
+    assert interval["successes"] == 2 and interval["trials"] == 2
+    assert interval["lower_95"] < interval["estimate"] < interval["upper_95"]
+    assert "Wilson" in interval["method"]
+
+
+def test_wilson_interval_handles_no_eligible_cases_and_validates_counts():
+    assert _wilson_interval(0, 0) is None
+    with pytest.raises(ValueError, match="between zero and trials"):
+        _wilson_interval(2, 1)
+
+
+def test_output_evaluation_rejects_duplicate_case_ids_before_running_model(tmp_path):
+    class MustNotRunAdapter:
+        configured = True
+        def generate(self, _prompt):
+            raise AssertionError("model must not run for invalid case IDs")
+    cases = [
+        {"case_id":"duplicate", "task":"first"},
+        {"case_id":"duplicate", "task":"second"},
+    ]
+    with pytest.raises(ValueError, match="duplicate evaluation case_id"):
+        evaluate_outputs(cases=cases, skill_root="skills", audit_path=tmp_path / "audit.jsonl",
+                         adapter=MustNotRunAdapter())
 
 
 def test_output_evaluation_requires_nonempty_cases(tmp_path):
