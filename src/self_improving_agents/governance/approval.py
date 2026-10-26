@@ -26,15 +26,18 @@ class Governance:
     def _find_target(self, skill_id: str) -> Path:
         if not re.fullmatch(r"[a-zA-Z0-9_-]+", skill_id):
             raise GovernanceError("Unsafe skill id")
+        metadata_ids = {Path(skill.path).resolve(): skill.skill_id for skill in discover_skills(self.skill_root)}
         matches = []
-        for skill in discover_skills(self.skill_root):
-            if skill.skill_id == skill_id:
-                candidate = Path(skill.path).resolve(strict=True)
-                try:
-                    candidate.relative_to(self.skill_root)
-                except ValueError:
-                    continue
-                matches.append(candidate)
+        for candidate in self.skill_root.rglob("SKILL.md"):
+            try:
+                resolved = candidate.resolve(strict=True)
+                resolved.relative_to(self.skill_root)
+            except (OSError, ValueError):
+                continue
+            # Directory-name fallback lets stale/malformed files be found and rejected by
+            # the base digest check, rather than being mistaken for a missing skill.
+            if resolved.parent.name == skill_id or metadata_ids.get(resolved) == skill_id:
+                matches.append(resolved)
         unique = list(dict.fromkeys(matches))
         if len(unique) != 1:
             raise GovernanceError(f"Expected exactly one skill target for {skill_id!r}; found {len(unique)}")
