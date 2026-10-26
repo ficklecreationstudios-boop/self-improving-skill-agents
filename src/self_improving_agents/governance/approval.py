@@ -1,6 +1,7 @@
-"""Skill updates require signed approval and a recoverable transaction journal."""
+"""Skill updates require signed approval, a serialized writer lock, and recovery journals."""
 from pathlib import Path
 from datetime import datetime, timezone
+from contextlib import contextmanager
 import json
 import os
 import re
@@ -21,6 +22,31 @@ class Governance:
         self.archive_root = Path(archive_root).resolve()
         self.audit = audit
         self.approval_key = approval_key
+        self.lock_path = self.archive_root / ".governance.lock"
+
+    @contextmanager
+    def _update_lock(self):
+        self.archive_root.mkdir(parents=True, exist_ok=True)
+        with self.lock_path.open("a+b") as lock_file:
+            if os.name == "nt":
+                import msvcrt
+                lock_file.seek(0, os.SEEK_END)
+                if lock_file.tell() == 0:
+                    lock_file.write(b"0"); lock_file.flush()
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                try:
+                    yield
+                finally:
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     def issue_approval(self, proposal: Proposal, approver: str, approved: bool, reason: str = "") -> Approval:
         if not approver.strip():
@@ -88,9 +114,10 @@ class Governance:
         self._atomic_write(journal_path, json.dumps(record, sort_keys=True, indent=2) + "\n")
 
     def recover_pending(self) -> list[str]:
-        """Recover interrupted updates before accepting another update."""
-        if not self.archive_root.exists():
-            return []
+        with self._update_lock():
+            return self._recover_pending_unlocked()
+
+    def _recover_pending_unlocked(self) -> list[str]:
         recovered: list[str] = []
         for journal_path in sorted(self.archive_root.glob("*.txn.json")):
             try:
@@ -147,6 +174,10 @@ class Governance:
         return recovered
 
     def apply(self, proposal: Proposal, approval: Approval) -> Path:
+        with self._update_lock():
+            return self._apply_locked(proposal, approval)
+
+    def _apply_locked(self, proposal: Proposal, approval: Approval) -> Path:
         if self.approval_key is None or not verify_approval(approval, self.approval_key):
             raise GovernanceError("Approval signature is missing or invalid")
         if approval.proposal_digest != proposal.proposal_digest:
@@ -155,7 +186,7 @@ class Governance:
             raise GovernanceError("Proposal digest is invalid")
         if not proposal.proposed_content.strip():
             raise GovernanceError("Proposed skill content must not be empty")
-        self.recover_pending()
+        self._recover_pending_unlocked()
         if not self.audit.verify():
             raise GovernanceError("Audit ledger failed integrity verification; refusing skill update")
         target = self._find_target(proposal.skill_id)
@@ -163,13 +194,10 @@ class Governance:
         if digest_text(current) != proposal.base_digest:
             raise GovernanceError("Stale proposal: base skill content has changed")
 
-        self.archive_root.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         archive = self.archive_root / f"{proposal.skill_id}.{stamp}.SKILL.md"
         with archive.open("x", encoding="utf-8", newline="\n") as stream:
-            stream.write(current)
-            stream.flush()
-            os.fsync(stream.fileno())
+            stream.write(current); stream.flush(); os.fsync(stream.fileno())
         self._fsync_directory(self.archive_root)
         journal_path = self.archive_root / f"{proposal.skill_id}.{stamp}.txn.json"
         record = {
