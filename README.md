@@ -1,20 +1,21 @@
 # Self-Improving Skill-Based Agents
 
-Local-first Python framework for routing tasks to specialist agents, selectively loading skills, recording feedback, generating screened skill-update proposals, and requiring approval before any skill mutation.
+Local-first Python framework for routing tasks to specialist agents, selectively loading skills, recording feedback, generating screened skill-update proposals, and requiring signed approval before any skill mutation.
 
 ## Safety principles
 - Standard-library core; Ollama is optional and explicitly configured.
 - Skills and task text are untrusted data, never policy or tool permissions.
-- If no model is configured, a task is audited as not executed and the CLI exits; a configuration notice is never misrepresented as a model answer.
+- If no model is configured, a task is audited as not executed; a configuration notice is never misrepresented as a model answer.
 - Feedback-driven learning creates a proposal only. It never applies a candidate automatically.
 - Candidate screening checks structure, target identity, size and a narrow known-risk phrase list.
-- A required JSONL regression suite tests candidate behavior using deterministic substring assertions. This is not semantic quality validation or proof of safety.
-- Applying a proposal requires explicit approval bound to the exact proposal digest.
+- Required JSONL regression cases use substring assertions; this is not semantic quality validation or proof of safety.
+- Updates require an HMAC-SHA256 approval signature bound to the exact proposal digest. HMAC proves possession of a shared secret, not a real-world identity.
+- Keep approval keys outside the repository, protect access, and do not commit keys or signed approval artifacts.
 - Skill updates archive prior versions and emit a hash-chained audit event.
 - No shell, arbitrary Python, or host-tool execution is exposed to agents.
-- Audit writes are serialized with a cross-process lock and fsync; hash chaining remains tamper-evident, not a signature or immutable external storage.
+- Audit writes are serialized with a cross-process lock and fsync; hash chaining remains tamper-evident, not immutable external storage.
 
-## Quick start (Python 3.11+)
+## Quick start
 ```bash
 python -m venv .venv
 python -m pip install -e '.[test]'
@@ -22,26 +23,26 @@ pytest -q
 PYTHONPATH=src python -m self_improving_agents.cli --help
 ```
 
-## Optional local Ollama
-Set `OLLAMA_MODEL` and optionally `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`). No model is downloaded automatically.
+## Approval-key workflow
+Create a random key file once and protect it outside version control:
+```powershell
+skill-agents init-approval-key "$HOME\skill-agents.approval-key"
+```
+Create and review a proposal, then sign it as a separate explicit step:
+```powershell
+skill-agents approve-proposal data/proposals/software_engineering.json --key-file "$HOME\skill-agents.approval-key" --approver "reviewer-id" --reason "reviewed candidate and test evidence" --approve --approval-output data/approvals/software_engineering.json
+skill-agents apply-proposal data/proposals/software_engineering.json data/approvals/software_engineering.json --key-file "$HOME\skill-agents.approval-key"
+skill-agents verify-audit
+```
+The approval file is sensitive governance evidence and should not be committed publicly. Anyone with the key can sign approvals; use OS account permissions or a dedicated signing service for stronger identity controls.
 
 ## Feedback-driven proposal workflow
 With a local Ollama model configured, use a frozen JSONL regression case file:
-
 ```powershell
 skill-agents learn-from-feedback --skill-id software_engineering --task-id task-001 --task "Debug a failing test" --output-text "The previous response missed the root cause" --rating 2 --feedback "Check the actual failure and include a regression test" --holdout eval/my_frozen_cases.jsonl --proposal-output data/proposals/software_engineering.json
 ```
-
 Each case contains `case_id`, `task`, and optional `must_include` and `must_not_include` string lists. Every case is run against the candidate; any failed assertion blocks proposal creation. Freeze cases before tuning and keep a separate independent holdout. Simple substring checks can be gamed and do not replace human or semantic evaluation.
 
-The active skill remains unchanged. Review the candidate and its audit events, then evaluate it independently before approval.
-
-## Governed skill update workflow
-1. Inspect the proposal and its exact digest.
-2. Evaluate the candidate on an independent, frozen suite.
-3. Only after human review, run `skill-agents apply-proposal data/proposals/software_engineering.json --approver "your review identity" --approve --reason "review rationale"`.
-4. Verify the audit with `skill-agents verify-audit`.
-
-`--approver` is a self-asserted label, not cryptographic identity. Do not use this as an authorization boundary against a hostile local user.
+The active skill remains unchanged. Review the candidate and its audit events, then evaluate it independently before signing approval.
 
 See `docs/DONE_CRITERIA.md`, `docs/ROADMAP.md`, and `SECURITY.md`. This remains a development system, not production-ready security software.

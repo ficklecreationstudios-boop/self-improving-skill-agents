@@ -1,4 +1,4 @@
-"""Approval-bound skill updates with archived prior versions."""
+"""Skill updates require a signed approval bound to the exact proposal."""
 from pathlib import Path
 from datetime import datetime, timezone
 import os
@@ -7,21 +7,32 @@ import tempfile
 from ..models import Proposal, Approval, digest_text
 from ..audit import AuditLedger
 from ..skills import discover_skills
+from ..approval_auth import sign_approval, verify_approval, ApprovalSignatureError
 
 class GovernanceError(RuntimeError):
     pass
 
 
 class Governance:
-    def __init__(self, skill_root: str | Path, archive_root: str | Path, audit: AuditLedger):
+    def __init__(self, skill_root: str | Path, archive_root: str | Path, audit: AuditLedger,
+                 approval_key: bytes | None = None):
         self.skill_root = Path(skill_root).resolve()
         self.archive_root = Path(archive_root).resolve()
         self.audit = audit
+        self.approval_key = approval_key
 
     def issue_approval(self, proposal: Proposal, approver: str, approved: bool, reason: str = "") -> Approval:
         if not approver.strip():
-            raise GovernanceError("Approver identity must be non-empty")
-        return Approval(proposal.proposal_digest, approver.strip(), approved, reason)
+            raise GovernanceError("Approver identity label must be non-empty")
+        if not approved:
+            return Approval(proposal.proposal_digest, approver.strip(), False, reason)
+        if self.approval_key is None:
+            raise GovernanceError("Approval signing key is not configured")
+        try:
+            return sign_approval(Approval(proposal.proposal_digest, approver.strip(), True, reason),
+                                 self.approval_key)
+        except ApprovalSignatureError as exc:
+            raise GovernanceError(str(exc)) from exc
 
     def _find_target(self, skill_id: str) -> Path:
         if not re.fullmatch(r"[a-zA-Z0-9_-]+", skill_id):
@@ -34,8 +45,6 @@ class Governance:
                 resolved.relative_to(self.skill_root)
             except (OSError, ValueError):
                 continue
-            # Directory-name fallback lets stale/malformed files be found and rejected by
-            # the base digest check, rather than being mistaken for a missing skill.
             if resolved.parent.name == skill_id or metadata_ids.get(resolved) == skill_id:
                 matches.append(resolved)
         unique = list(dict.fromkeys(matches))
@@ -61,9 +70,9 @@ class Governance:
             raise
 
     def apply(self, proposal: Proposal, approval: Approval) -> Path:
-        if not approval.approved:
-            raise GovernanceError("Proposal was not approved")
-        if not approval.approver.strip() or approval.proposal_digest != proposal.proposal_digest:
+        if self.approval_key is None or not verify_approval(approval, self.approval_key):
+            raise GovernanceError("Approval signature is missing or invalid")
+        if approval.proposal_digest != proposal.proposal_digest:
             raise GovernanceError("Approval does not bind this exact proposal")
         if proposal.sealed().proposal_digest != proposal.proposal_digest:
             raise GovernanceError("Proposal digest is invalid")
@@ -89,6 +98,7 @@ class Governance:
                 "skill_id": proposal.skill_id,
                 "proposal_digest": proposal.proposal_digest,
                 "approver": approval.approver,
+                "approval_signature_digest": digest_text(approval.signature),
                 "archive": str(archive),
                 "new_digest": digest_text(proposal.proposed_content),
             })

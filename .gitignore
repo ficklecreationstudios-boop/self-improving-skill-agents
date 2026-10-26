@@ -1,9 +1,9 @@
 __pycache__/
 *.py[cod]
-.pytest_cache/
 .venv/
-dist/
+.pytest_cache/
 build/
+dist/
 *.egg-info/
-data/audit.jsonl
-data/skill-archive/
+data/
+*.approval-key

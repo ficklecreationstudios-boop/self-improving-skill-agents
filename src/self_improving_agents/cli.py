@@ -1,14 +1,25 @@
 """Command-line entry point."""
-import argparse, json
+import argparse, json, os, secrets
 from pathlib import Path
-from .models import Task, Proposal
+from .models import Task, Proposal, Approval
 from .orchestrator import run_task, ModelNotConfiguredError
 from .skills import discover_skills, select_skills
 from .audit import AuditLedger
 from .agents.review import propose_skill_update
 from .governance.approval import Governance
+from .approval_auth import sign_approval, validate_key, ApprovalSignatureError
 from .learning import create_candidate_proposal, write_proposal, load_cases, LearningGateError
 from .ollama import OllamaAdapter
+
+
+def read_approval_key(path: str) -> bytes:
+    try:
+        key = Path(path).read_bytes()
+        validate_key(key)
+        return key
+    except (OSError, ApprovalSignatureError) as exc:
+        raise SystemExit(f"Cannot use approval key: {exc}") from exc
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="skill-agents")
@@ -27,8 +38,16 @@ def main() -> None:
     learn.add_argument("--skills", default="skills"); learn.add_argument("--audit", default="data/audit.jsonl")
     learn.add_argument("--holdout", required=True, help="Path to frozen JSONL regression cases")
     learn.add_argument("--proposal-output", required=True); learn.add_argument("--max-chars", type=int, default=20000)
-    apply = sub.add_parser("apply-proposal", help="Apply a proposal after explicit human approval")
-    apply.add_argument("proposal_file"); apply.add_argument("--skills", default="skills"); apply.add_argument("--archive", default="data/skill-archive"); apply.add_argument("--audit", default="data/audit.jsonl"); apply.add_argument("--approver", required=True); apply.add_argument("--approve", action="store_true", required=True); apply.add_argument("--reason", default="")
+    init_key = sub.add_parser("init-approval-key", help="Create a random local shared-secret approval key")
+    init_key.add_argument("key_file")
+    approve = sub.add_parser("approve-proposal", help="Sign a proposal approval using the local shared secret")
+    approve.add_argument("proposal_file"); approve.add_argument("--key-file", required=True)
+    approve.add_argument("--approver", required=True); approve.add_argument("--reason", required=True)
+    approve.add_argument("--approval-output", required=True); approve.add_argument("--approve", action="store_true", required=True)
+    apply = sub.add_parser("apply-proposal", help="Apply a proposal with a valid signed approval")
+    apply.add_argument("proposal_file"); apply.add_argument("approval_file")
+    apply.add_argument("--key-file", required=True); apply.add_argument("--skills", default="skills")
+    apply.add_argument("--archive", default="data/skill-archive"); apply.add_argument("--audit", default="data/audit.jsonl")
     args = parser.parse_args()
     if args.command == "ask":
         try:
@@ -69,13 +88,41 @@ def main() -> None:
             "regression_screening": behavioral.as_dict(),
             "warning": "Substring regression checks are not semantic quality validation; independent review and human approval remain required.",
         }, indent=2))
-    elif args.command == "apply-proposal":
+    elif args.command == "init-approval-key":
+        destination = Path(args.key_file)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with destination.open("xb") as stream:
+                stream.write(secrets.token_bytes(32))
+                stream.flush()
+                os.fsync(stream.fileno())
+            if os.name != "nt":
+                destination.chmod(0o600)
+        except FileExistsError:
+            raise SystemExit("Refusing to overwrite an existing approval key")
+        print(json.dumps({"status": "key_created", "path": str(destination),
+                          "warning": "Protect this key outside the repository; anyone holding it can sign approvals."}, indent=2))
+    elif args.command == "approve-proposal":
+        key = read_approval_key(args.key_file)
         data = json.loads(Path(args.proposal_file).read_text(encoding="utf-8"))
         item = Proposal(**data)
+        try:
+            approval = sign_approval(Approval(item.proposal_digest, args.approver, True, args.reason), key)
+        except ApprovalSignatureError as exc:
+            raise SystemExit(str(exc)) from exc
+        destination = Path(args.approval_output)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(approval.__dict__, indent=2), encoding="utf-8")
+        print(json.dumps({"status": "signed_approval_created", "approval_file": str(destination),
+                          "proposal_digest": item.proposal_digest}, indent=2))
+    elif args.command == "apply-proposal":
+        key = read_approval_key(args.key_file)
+        item = Proposal(**json.loads(Path(args.proposal_file).read_text(encoding="utf-8")))
+        approval = Approval(**json.loads(Path(args.approval_file).read_text(encoding="utf-8")))
         ledger = AuditLedger(args.audit)
-        governance = Governance(args.skills, args.archive, ledger)
-        approval = governance.issue_approval(item, args.approver, approved=args.approve, reason=args.reason)
+        governance = Governance(args.skills, args.archive, ledger, approval_key=key)
         target = governance.apply(item, approval)
-        print(json.dumps({"status": "applied", "skill_id": item.skill_id, "path": str(target), "proposal_digest": item.proposal_digest, "audit_valid": ledger.verify()}, indent=2))
+        print(json.dumps({"status": "applied", "skill_id": item.skill_id, "path": str(target),
+                          "proposal_digest": item.proposal_digest, "audit_valid": ledger.verify()}, indent=2))
 
 if __name__ == "__main__": main()
