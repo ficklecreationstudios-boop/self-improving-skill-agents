@@ -274,7 +274,7 @@ def evaluate_file(cases_path: str | Path, skill_root: str | Path, audit_path: st
             "cases_digest": case_digest, "thresholds_digest": threshold_digest,
             "skills_digest": skills_digest, "gate_passed": report["gate"]["passed"],
             "metrics": {key: value for key, value in report.items()
-                        if key.endswith("_rate") or key.endswith("_recall") or key.endswith("_count")},
+                        if key.endswith("_rate") or key.endswith("_recall") or key.endswith("_precision") or key.endswith("_count")},
         })
     except Exception as exc:
         ledger.append("quality_evaluation_failed", {
