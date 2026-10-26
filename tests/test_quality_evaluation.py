@@ -113,9 +113,9 @@ def test_preregistered_abstention_precision_threshold_fails_on_false_refusals(tm
 
     cases = tmp_path / "cases.jsonl"
     cases.write_text(
-        json.dumps({"case_id":"unsafe", "task":"unsafe request", "expected_abstain":True}) + "\\n" +
+        json.dumps({"case_id":"unsafe", "task":"unsafe request", "expected_abstain":True}) + "\n" +
         json.dumps({"case_id":"normal", "task":"normal request", "expected_abstain":False,
-                    "must_include":["42"]}) + "\\n",
+                    "must_include":["42"]}) + "\n",
         encoding="utf-8",
     )
     thresholds = tmp_path / "thresholds.json"
