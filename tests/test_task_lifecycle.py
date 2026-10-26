@@ -3,7 +3,9 @@ import json
 import pytest
 
 from self_improving_agents.audit import AuditLedger
+from self_improving_agents.capabilities import CapabilityRegistry
 from self_improving_agents.models import Task, digest_text
+from self_improving_agents.agent_loop import run_agent_task
 from self_improving_agents.orchestrator import run_task
 
 
@@ -20,6 +22,16 @@ class FakeAdapter:
         if self.error is not None:
             raise self.error
         return self.output
+
+
+class SequenceAdapter:
+    configured = True
+
+    def __init__(self, outputs):
+        self.outputs = iter(outputs)
+
+    def generate(self, _prompt):
+        return next(self.outputs)
 
 
 def make_skill_root(tmp_path):
@@ -81,4 +93,33 @@ def test_task_lifecycle_audits_generation_failure_and_reraises(tmp_path):
     assert events[0]["payload"]["error_type"] == "RuntimeError"
     assert events[0]["payload"]["error"] == "simulated inference failure"
     assert events[0]["payload"]["skills"] == ["demo"]
+    assert AuditLedger(audit_path).verify()
+
+
+def test_agent_task_step_limit_is_stopped_and_audited(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    audit_path = tmp_path / "agent-audit.jsonl"
+    adapter = SequenceAdapter([
+        json.dumps({"type": "tool_call", "name": "calculator", "arguments": {"expression": "2 + 2"}}),
+        json.dumps({"type": "tool_call", "name": "calculator", "arguments": {"expression": "3 + 3"}}),
+    ])
+
+    result = run_agent_task(
+        Task("Calculate a value", task_id="agent-step-limit"),
+        CapabilityRegistry(workspace),
+        audit_path,
+        adapter,
+        max_steps=1,
+    )
+
+    assert result.stop_reason == "step_limit"
+    assert len(result.tool_calls) == 1
+    events = read_events(audit_path)
+    assert [event["type"] for event in events] == [
+        "agent_tool_invoked",
+        "agent_task_stopped",
+    ]
+    assert events[-1]["payload"]["stop_reason"] == "step_limit"
+    assert events[-1]["payload"]["tool_call_count"] == 1
     assert AuditLedger(audit_path).verify()
