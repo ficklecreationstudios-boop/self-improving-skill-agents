@@ -6,7 +6,7 @@ This document fixes the evidence needed to close each remaining gate. A gate may
 
 **Acceptance:** (1) parser rejects malformed metadata, duplicate IDs, path traversal, symlink escapes and oversized inputs; (2) capability registry rejects unknown tools, malformed arguments, traversal and bounded-resource violations; (3) a versioned adversarial corpus includes direct prompt injection, tool escalation, data exfiltration, indirect injection through skills/files/tool output and refusal/abstention cases; (4) live results are run against the exact model tag and recorded with model digest/version, prompt/corpus hashes and per-case output digests; (5) an independent reviewer reviews failures and bypass attempts. CI-only fake-adapter tests do not close the live-model portion.
 
-**Current limitation:** live-model security tests require the owner's local Ollama service. A finite benchmark can establish bounded evidence for that model/corpus, never universal resistance.
+**Current limitation:** live-model security tests require the owner's local Ollama service. Run with `RUN_SECURITY_INTEGRATION=1`, the exact `OLLAMA_MODEL` tag, and `SECURITY_BENCHMARK_REPORT` set to an absolute JSONL path outside the repository. The report records the model digest, input/output hashes, tool names, attack outcome flags and UTC timestamp without storing raw output. A finite benchmark can establish bounded evidence for that model/corpus, never universal resistance.
 
 ## D4 — Governance
 
