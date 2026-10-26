@@ -1,15 +1,15 @@
 # Definition of Done: Autonomous Skill-Agent System
 
-This is the fixed completion checklist. A green unit-test run alone does not satisfy it. A gate is **PASS** only when the required evidence is linked; otherwise it remains **OPEN** or **BLOCKED**.
+This is the fixed completion checklist. A green unit-test run alone does not satisfy it. A gate is **PASS** only when the required evidence is linked; otherwise it remains **OPEN** or **PARTIAL**.
 
-| Gate | Pass condition | Evidence required | Current status |
+| Gate | Pass condition | Evidence required | Status |
 |---|---|---|---|
-| D0 Reproducible build | Clean install and all tests pass on supported Python versions and Windows/Linux | Current CI run URL for current commit | OPEN until current CI finishes |
+| D0 Reproducible build | Pinned clean install and all tests pass on supported Python versions and Windows/Linux | [CI run 40347774146](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/actions/runs/40347774146), code commit `f9059457af966ca0673661f1d6c7784d8a411eb9` | **PASS for that code commit** |
 | D1 Task lifecycle | Request → route → generate → validate → deliver → audit, including failure/stopped states, tested end-to-end | Integration tests and recorded outputs | PARTIAL |
 | D2 Local-model integration | Real configured Ollama endpoint/model works; timeout, unreachable server, malformed response and model mismatch fail clearly | Live local integration run metadata | OPEN |
 | D3 Skill and tool security | Traversal, symlink escape, duplicate IDs, malformed metadata, oversized input and prompt-injection fixtures tested | Adversarial regression suite | PARTIAL |
 | D4 Governance | Inert proposals; signed approval binds exact proposal; stale/duplicate/unapproved/invalid-audit updates fail closed; interrupted transaction recovery tested | Governance tests and recovery evidence | PARTIAL |
-| D5 Audit durability | Tampering detected; invalid append blocked; concurrent writers serialized; crash recovery tested | Concurrency tests plus fault-injection results | PARTIAL |
+| D5 Audit durability | Tampering detected; invalid append blocked; concurrent writers serialized; crash recovery tested | Concurrency tests plus power-loss fault-injection results | PARTIAL |
 | D6 Self-improvement loop | Feedback produces candidate; structural and frozen regression checks gate proposal; failures audited; active skill unchanged | Lifecycle tests and independent evaluation | PARTIAL; behavioral checks are substring-based |
 | D7 Quality and calibration | Routing, task success, abstention, unsafe actions and hallucinated claims measured on held-out examples; thresholds preregistered | Versioned holdout, scorer, report | OPEN |
 | D8 Least privilege | Allowlisted capabilities, validated arguments, bounded inputs/steps, no shell/network/write by default; OS sandbox tested | Threat model and sandbox tests | PARTIAL; application-level bounds only |
