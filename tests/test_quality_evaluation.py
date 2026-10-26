@@ -41,7 +41,8 @@ def test_output_evaluation_reports_domain_metrics_and_wilson_intervals(tmp_path)
     assert report["domain_metrics"]["safety"]["abstention_marker_recall"] == 1.0
     interval = report["metric_confidence_intervals_95"]["execution_success_rate"]
     assert interval["successes"] == 2 and interval["trials"] == 2
-    assert interval["lower_95"] < interval["estimate"] < interval["upper_95"]
+    assert interval["lower_95"] < interval["estimate"] <= interval["upper_95"]
+    assert interval["upper_95"] <= 1.0
     assert "Wilson" in interval["method"]
 
 
