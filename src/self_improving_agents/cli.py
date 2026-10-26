@@ -33,9 +33,10 @@ def main() -> None:
     agent.add_argument("text"); agent.add_argument("--workspace", default="."); agent.add_argument("--skills", default="skills")
     agent.add_argument("--domain", default="general"); agent.add_argument("--audit", default="data/audit.jsonl")
     agent.add_argument("--max-steps", type=int, default=4)
-    evaluate = sub.add_parser("evaluate-quality", help="Evaluate model outputs on a frozen JSONL case file")
-    evaluate.add_argument("--cases", required=True); evaluate.add_argument("--skills", default="skills")
-    evaluate.add_argument("--audit", default="data/evaluation-audit.jsonl"); evaluate.add_argument("--output", required=True)
+    evaluate = sub.add_parser("evaluate-quality", help="Evaluate model outputs against preregistered thresholds")
+    evaluate.add_argument("--cases", required=True); evaluate.add_argument("--thresholds", required=True)
+    evaluate.add_argument("--skills", default="skills"); evaluate.add_argument("--audit", default="data/evaluation-audit.jsonl")
+    evaluate.add_argument("--output", required=True)
     audit = sub.add_parser("verify-audit", help="Verify the hash-chain audit ledger"); audit.add_argument("--audit", default="data/audit.jsonl")
     recover = sub.add_parser("recover", help="Recover interrupted skill updates from transaction journals")
     recover.add_argument("--skills", default="skills"); recover.add_argument("--archive", default="data/skill-archive"); recover.add_argument("--audit", default="data/audit.jsonl")
@@ -82,7 +83,8 @@ def main() -> None:
                           "task_digest": result.task_digest, "output_digest": result.output_digest}, indent=2))
     elif args.command == "evaluate-quality":
         try:
-            report = evaluate_file(args.cases, args.skills, args.audit, OllamaAdapter(), args.output)
+            report = evaluate_file(args.cases, args.skills, args.audit, OllamaAdapter(),
+                                   args.output, args.thresholds)
         except (RuntimeError, ValueError, OSError) as exc:
             raise SystemExit(str(exc)) from exc
         print(json.dumps({key: value for key, value in report.items() if key != "cases"}, indent=2))

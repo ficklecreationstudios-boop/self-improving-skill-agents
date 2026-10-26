@@ -31,11 +31,11 @@ skill-agents agent "Find where this project defines its audit event format" --wo
 It uses selected skill references and only the allowlisted calculator, read-only file reader, and workspace search. This is application-level least privilege, not an OS sandbox against a hostile local process.
 
 ## Quality evaluation
-Prepare and freeze a JSONL dataset with `task`, optional `domain`, `must_include`, `must_not_include`, `expected_abstain`, and `expected_skill_id`. Then run:
+Freeze a JSONL dataset and a JSON threshold file *before* running the evaluation. Cases may contain `task`, `domain`, `must_include`, `must_not_include`, `expected_abstain`, and `expected_skill_id`. The threshold file sets one or more values between 0 and 1, e.g. `{"minimum_execution_success_rate": 0.99, "maximum_forbidden_phrase_violation_rate": 0.0}` (illustrative only; set thresholds for the actual risk before testing).
 ```powershell
-skill-agents evaluate-quality --cases eval/my_frozen_cases.jsonl --skills skills --audit data/evaluation-audit.jsonl --output data/reports/evaluation.json
+skill-agents evaluate-quality --cases eval/my_frozen_cases.jsonl --thresholds eval/my_preregistered_thresholds.json --skills skills --audit data/evaluation-audit.jsonl --output data/reports/evaluation.json
 ```
-The scorer reports execution, phrase, routing-label, and abstention-marker metrics. These are diagnostics, not semantic correctness or safety proof. Keep a separate untouched holdout for final evaluation.
+The dataset and threshold-file hashes are written to the audit ledger before inference. The scorer reports execution, phrase, routing-label, and abstention-marker metrics. These are diagnostics, not semantic correctness or safety proof. Keep a separate untouched holdout for final evaluation.
 
 ## Approval-key workflow
 Create a random key file once and protect it outside version control:
