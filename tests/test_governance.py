@@ -78,3 +78,29 @@ def test_signed_approval_cannot_authorize_a_different_proposal(tmp_path):
     assert target.read_text(encoding="utf-8") == original
     assert list((tmp_path / "archive").glob("*.SKILL.md")) == []
     assert ledger.verify()
+
+
+def test_approval_signature_binds_key_identifier(tmp_path):
+    target, ledger, gov = setup_governance(tmp_path)
+    original = target.read_text(encoding="utf-8")
+    proposal = propose_skill_update("demo", original, "---\\nid: demo\\n---\\nnew", "key-id binding")
+    approval = gov.issue_approval(proposal, "reviewer", True, "reviewed key id")
+    assert len(approval.key_id) == 64
+    with pytest.raises(GovernanceError, match="key identifier"):
+        gov.apply(proposal, replace(approval, key_id="0" * 64))
+    assert target.read_text(encoding="utf-8") == original
+    assert ledger.verify()
+
+
+def test_revoked_key_cannot_sign_or_apply_approval(tmp_path):
+    target, ledger, gov = setup_governance(tmp_path)
+    original = target.read_text(encoding="utf-8")
+    proposal = propose_skill_update("demo", original, "---\\nid: demo\\n---\\nnew", "revocation")
+    approval = gov.issue_approval(proposal, "reviewer", True, "signed before revocation")
+    ledger.append("approval_key_revoked", {"key_id": approval.key_id, "reason": "test revocation"})
+    with pytest.raises(GovernanceError, match="revoked"):
+        gov.apply(proposal, approval)
+    with pytest.raises(GovernanceError, match="revoked"):
+        gov.issue_approval(proposal, "reviewer", True, "try after revocation")
+    assert target.read_text(encoding="utf-8") == original
+    assert ledger.verify()
