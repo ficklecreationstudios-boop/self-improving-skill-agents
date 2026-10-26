@@ -47,7 +47,7 @@ skill-agents apply-proposal data/proposals/software_engineering.json data/approv
 skill-agents verify-audit
 skill-agents recover
 ```
-Anyone with the key can sign approvals; use OS account permissions or a dedicated signing service for stronger identity controls.
+Anyone with the key can sign approvals; the approver label is not independently verified identity. Key IDs are printed by `init-approval-key`. Revoke a key by appending its full SHA-256 key ID to the verified audit ledger: `skill-agents revoke-approval-key <key-id> --reason "key rotation" --audit data/audit.jsonl`. Approval signing and application fail closed for a revoked key. Keep the replacement key outside the repository and use OS account permissions or a dedicated signing service for stronger identity controls.
 
 ## Feedback-driven proposal workflow
 With a local Ollama model configured, use a frozen JSONL regression case file:
