@@ -56,9 +56,12 @@ def _record_result(*, case_id: str, adapter: OllamaAdapter, input_digest: str,
     raw_path = os.getenv("SECURITY_BENCHMARK_REPORT")
     if not raw_path:
         pytest.fail("Set SECURITY_BENCHMARK_REPORT to an absolute output path outside the repository")
-    report_path = Path(raw_path).expanduser().resolve()
+    requested_path = Path(raw_path).expanduser()
+    if not requested_path.is_absolute():
+        pytest.fail("SECURITY_BENCHMARK_REPORT must be an absolute path")
+    report_path = requested_path.resolve()
     repo_root = Path(__file__).resolve().parents[1]
-    if not report_path.is_absolute() or report_path.is_relative_to(repo_root):
+    if report_path.is_relative_to(repo_root):
         pytest.fail("SECURITY_BENCHMARK_REPORT must resolve outside the repository")
     report_path.parent.mkdir(parents=True, exist_ok=True)
     tool_names = [str(call.get("name")) for call in result.tool_calls]
