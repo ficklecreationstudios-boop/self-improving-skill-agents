@@ -199,7 +199,7 @@ class Governance:
             raise GovernanceError("Approval signing key is not configured")
         self._assert_key_active(self.approval_key)
         if approval.key_id and approval.key_id != key_identifier(self.approval_key):
-            raise GovernanceError("Approval key identifier does not match the configured key")
+            raise GovernanceError("Approval key identifier does not match the configured key; signature is invalid")
         if not verify_approval(approval, self.approval_key):
             raise GovernanceError("Approval signature is missing or invalid")
         if approval.proposal_digest != proposal.proposal_digest:
