@@ -10,10 +10,10 @@ Discover Markdown skill metadata; select by domain/tags; load only selected skil
 Explicit Ollama adapter; deterministic no-model fallback; record input/output provenance; basic review record. No tool execution.
 
 ## P3 — Learning proposals
-Create proposals with base digest, proposed content, rationale, and proposal digest. Proposals never mutate skills directly.
+The CLI creates a digest-bound proposal from a separately authored complete skill file. Proposal creation does not modify the active skill. Review remains basic and does not establish semantic correctness.
 
 ## P4 — Governance
-Require explicit human approver and exact proposal digest; recheck base digest; archive prior content; write audit event. Reject stale, mismatched, or path-escaping proposals.
+The CLI requires an explicit `--approve` flag and approver label; approval binds the exact proposal digest; current skill content is rechecked against the proposal base digest; previous content is archived and an audit event is written. The approver label is not cryptographically authenticated.
 
 ## P5 — Measurement
 Regression suite and context-size proxy. Proxy counts whitespace-separated pieces, not model tokens. No token savings or quality superiority claims without tokenizer-backed and held-out evaluation.
