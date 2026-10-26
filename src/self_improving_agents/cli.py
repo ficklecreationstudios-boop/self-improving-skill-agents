@@ -61,6 +61,7 @@ def main() -> None:
     revoke = sub.add_parser("revoke-approval-key", help="Revoke an approval key identifier in the audit ledger")
     revoke.add_argument("key_id", help="Full SHA-256 key identifier printed by init-approval-key")
     revoke.add_argument("--reason", required=True); revoke.add_argument("--audit", default="data/audit.jsonl")
+    revoke.add_argument("--archive", default="data/skill-archive", help="Must match the archive path used by apply-proposal")
     apply = sub.add_parser("apply-proposal", help="Apply a proposal with a valid signed approval")
     apply.add_argument("proposal_file"); apply.add_argument("approval_file")
     apply.add_argument("--key-file", required=True); apply.add_argument("--skills", default="skills")
@@ -164,24 +165,12 @@ def main() -> None:
         print(json.dumps({"status": "signed_approval_created", "approval_file": str(destination),
                           "proposal_digest": item.proposal_digest, "key_id": approval.key_id}, indent=2))
     elif args.command == "revoke-approval-key":
-        if not re.fullmatch(r"[0-9a-f]{64}", args.key_id):
-            raise SystemExit("key_id must be a full 64-character lowercase SHA-256 identifier")
-        if not args.reason.strip():
-            raise SystemExit("Revocation reason must be non-empty")
         ledger = AuditLedger(args.audit)
-        if not ledger.verify():
-            raise SystemExit("Audit ledger is invalid; refusing to revoke key")
-        existing = any(event.get("type") == "approval_key_revoked"
-                       and event.get("payload", {}).get("key_id") == args.key_id
-                       for event in ledger._events())
-        if existing:
-            print(json.dumps({"status": "already_revoked", "key_id": args.key_id}, indent=2))
-        else:
-            event = ledger.append("approval_key_revoked", {
-                "key_id": args.key_id, "reason": args.reason.strip(),
-            })
-            print(json.dumps({"status": "key_revoked", "key_id": args.key_id,
-                              "audit_seq": event["seq"], "audit_valid": ledger.verify()}, indent=2))
+        try:
+            result = Governance(".", args.archive, ledger).revoke_approval_key(args.key_id, args.reason)
+        except RuntimeError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(json.dumps(result, indent=2))
     elif args.command == "apply-proposal":
         key = read_approval_key(args.key_file)
         item = Proposal(**json.loads(Path(args.proposal_file).read_text(encoding="utf-8")))
