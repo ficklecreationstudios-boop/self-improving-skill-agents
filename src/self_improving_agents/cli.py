@@ -3,6 +3,8 @@ import argparse, json, os, secrets
 from pathlib import Path
 from .models import Task, Proposal, Approval
 from .orchestrator import run_task, ModelNotConfiguredError
+from .agent_loop import run_agent_task
+from .capabilities import CapabilityRegistry
 from .skills import discover_skills, select_skills
 from .audit import AuditLedger
 from .agents.review import propose_skill_update
@@ -26,6 +28,9 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     ask = sub.add_parser("ask", help="Run a task using selected local skills")
     ask.add_argument("text"); ask.add_argument("--domain", default="general"); ask.add_argument("--skills", default="skills"); ask.add_argument("--audit", default="data/audit.jsonl")
+    agent = sub.add_parser("agent", help="Run a bounded agent loop with allowlisted local capabilities")
+    agent.add_argument("text"); agent.add_argument("--workspace", default="."); agent.add_argument("--audit", default="data/audit.jsonl")
+    agent.add_argument("--max-steps", type=int, default=4)
     audit = sub.add_parser("verify-audit", help="Verify the hash-chain audit ledger"); audit.add_argument("--audit", default="data/audit.jsonl")
     recover = sub.add_parser("recover", help="Recover interrupted skill updates from transaction journals")
     recover.add_argument("--skills", default="skills"); recover.add_argument("--archive", default="data/skill-archive"); recover.add_argument("--audit", default="data/audit.jsonl")
@@ -58,6 +63,16 @@ def main() -> None:
             raise SystemExit(str(exc)) from exc
         print(result.output)
         print(json.dumps({"skills": result.skill_ids, "review": result.review.__dict__, "task_digest": result.task_digest, "output_digest": result.output_digest}, indent=2))
+    elif args.command == "agent":
+        try:
+            result = run_agent_task(Task(args.text), CapabilityRegistry(args.workspace),
+                                    args.audit, OllamaAdapter(), max_steps=args.max_steps)
+        except (RuntimeError, ValueError) as exc:
+            raise SystemExit(str(exc)) from exc
+        print(result.output)
+        print(json.dumps({"tool_call_count": len(result.tool_calls), "tool_names": [call["name"] for call in result.tool_calls],
+                          "steps": result.steps, "stop_reason": result.stop_reason,
+                          "task_digest": result.task_digest, "output_digest": result.output_digest}, indent=2))
     elif args.command == "verify-audit": print("VALID" if AuditLedger(args.audit).verify() else "INVALID")
     elif args.command == "recover":
         results = Governance(args.skills, args.archive, AuditLedger(args.audit)).recover_pending()
@@ -87,15 +102,12 @@ def main() -> None:
         except LearningGateError as exc:
             raise SystemExit(str(exc)) from exc
         destination = write_proposal(item, args.proposal_output)
-        print(json.dumps({
-            "status": "proposal_created_not_applied", "proposal_file": str(destination),
-            "proposal_digest": item.proposal_digest, "structural_screening": structural.as_dict(),
-            "regression_screening": behavioral.as_dict(),
-            "warning": "Substring regression checks are not semantic quality validation; independent review and human approval remain required.",
-        }, indent=2))
+        print(json.dumps({"status": "proposal_created_not_applied", "proposal_file": str(destination),
+                          "proposal_digest": item.proposal_digest, "structural_screening": structural.as_dict(),
+                          "regression_screening": behavioral.as_dict(),
+                          "warning": "Substring regression checks are not semantic quality validation; independent review and human approval remain required."}, indent=2))
     elif args.command == "init-approval-key":
-        destination = Path(args.key_file)
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination = Path(args.key_file); destination.parent.mkdir(parents=True, exist_ok=True)
         try:
             with destination.open("xb") as stream:
                 stream.write(secrets.token_bytes(32)); stream.flush(); os.fsync(stream.fileno())
