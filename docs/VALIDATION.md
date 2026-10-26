@@ -52,6 +52,17 @@ These are deterministic integration tests using a fake adapter; they validate or
 
 Limitations: the prompt-injection fixture checks framing of untrusted content; it does not prove that a real model will resist every injection. Symlink tests may be skipped on runners where symlink creation is unavailable. D3 remains PARTIAL until prompt-injection behavior and the wider security boundary receive stronger independent evaluation.
 
+## D3–D11 hardening CI evidence
+
+- Integration PR: [#9](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/pull/9)
+- Current CI run: [40388466130](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/actions/runs/40388466130)
+- Matrix: Windows/Linux × Python 3.11/3.14; all four jobs succeeded.
+- Each job reported **84 passed, 5 skipped**. The skips include opt-in live Ollama/security tests that cannot access the owner's local model from hosted CI.
+- Added multiprocess audit-writer serialization coverage, key-ID-bound HMAC approval signatures, audit-ledger key revocation, candidate holdout preregistration, abstention precision metrics, and stricter malformed capability handling.
+- Added [fixed D3–D11 acceptance criteria](ACCEPTANCE_D3_D11.md) and a [clean-machine operations runbook](OPERATIONS_ACCEPTANCE.md).
+
+This CI result does not close D3–D11 by itself. The live prompt-injection suite still requires execution on the owner's local Ollama model; D5 still requires power-loss/filesystem durability testing; D7 requires an owner-approved labeled holdout and independent semantic adjudication; D8 requires OS-level sandbox testing; D9 requires a clean-machine walkthrough; D10 requires externally verified identity/roles; and D11 requires independent review plus explicit owner sign-off. The acceptance checklist intentionally keeps those gates PARTIAL or OPEN until that evidence exists.
+
 ## Implemented and tested (baseline code)
 
 - Feedback-to-candidate-to-inert-proposal flow with structural screening and a required regression-case file.
