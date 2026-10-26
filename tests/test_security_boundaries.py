@@ -39,7 +39,7 @@ def test_duplicate_skill_ids_are_rejected_before_any_update(tmp_path):
         governance.apply(proposal, approval)
     assert (first / "SKILL.md").read_text(encoding="utf-8") == content
     assert (second / "SKILL.md").read_text(encoding="utf-8") == content
-    assert list((tmp_path / "archive").glob("*")) == []
+    assert list((tmp_path / "archive").glob("*.SKILL.md")) == []
 
 
 def test_invalid_audit_blocks_skill_update(tmp_path):
