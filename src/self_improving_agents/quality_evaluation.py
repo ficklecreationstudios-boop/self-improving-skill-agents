@@ -7,7 +7,7 @@ from typing import Any
 from .models import Task
 from .orchestrator import run_task
 from .ollama import OllamaAdapter
-from .learning import load_cases
+from .skills import discover_skills
 from .audit import AuditLedger
 
 _ABSTENTION_MARKERS = (
@@ -24,6 +24,42 @@ _ALLOWED_THRESHOLDS = {
 def _has_abstention(output: str) -> bool:
     lowered = output.casefold()
     return any(marker in lowered for marker in _ABSTENTION_MARKERS)
+
+
+def _parse_cases(raw: bytes) -> list[dict[str, Any]]:
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("Evaluation case file must be UTF-8") from exc
+    cases = []
+    for line_number, line in enumerate(content.splitlines(), 1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid evaluation JSON on line {line_number}") from exc
+        if not isinstance(item, dict):
+            raise ValueError(f"Evaluation line {line_number} must contain a JSON object")
+        cases.append(item)
+    if not cases:
+        raise ValueError("A non-empty frozen evaluation dataset is required")
+    return cases
+
+
+def _skill_corpus_digest(skill_root: str | Path) -> str:
+    root = Path(skill_root).resolve()
+    records = []
+    for skill in discover_skills(root):
+        path = Path(skill.path).resolve(strict=True)
+        try:
+            relative = path.relative_to(root).as_posix()
+        except ValueError as exc:
+            raise ValueError("Discovered skill escapes configured skill root") from exc
+        records.append({"path": relative, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+    records.sort(key=lambda row: row["path"])
+    canonical = json.dumps(records, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def validate_thresholds(value: Any) -> dict[str, float]:
@@ -146,31 +182,37 @@ def evaluate_file(cases_path: str | Path, skill_root: str | Path, audit_path: st
         raise ValueError("A threshold file must be provided and preregistered before evaluation")
     case_bytes = Path(cases_path).read_bytes()
     threshold_bytes = Path(thresholds_path).read_bytes()
+    cases = _parse_cases(case_bytes)
     thresholds = validate_thresholds(json.loads(threshold_bytes.decode("utf-8")))
     case_digest = hashlib.sha256(case_bytes).hexdigest()
     threshold_digest = hashlib.sha256(threshold_bytes).hexdigest()
+    skills_digest = _skill_corpus_digest(skill_root)
     ledger = AuditLedger(audit_path)
     ledger.append("quality_evaluation_preregistered", {
-        "cases_digest": case_digest, "thresholds_digest": threshold_digest, "thresholds": thresholds,
+        "cases_digest": case_digest, "thresholds_digest": threshold_digest,
+        "skills_digest": skills_digest, "thresholds": thresholds,
     })
     try:
-        report = evaluate_outputs(cases=load_cases(cases_path), skill_root=skill_root,
+        report = evaluate_outputs(cases=cases, skill_root=skill_root,
                                   audit_path=audit_path, adapter=adapter or OllamaAdapter())
+        if _skill_corpus_digest(skill_root) != skills_digest:
+            raise RuntimeError("Skill corpus changed during evaluation; report is invalid")
         report["preregistration"] = {
             "cases_digest": case_digest, "thresholds_digest": threshold_digest,
-            "thresholds": thresholds, "recorded_before_model_run": True,
+            "skills_digest": skills_digest, "thresholds": thresholds,
+            "recorded_before_model_run": True,
         }
         report["gate"] = _evaluate_thresholds(report, thresholds)
         ledger.append("quality_evaluation_completed", {
             "cases_digest": case_digest, "thresholds_digest": threshold_digest,
-            "gate_passed": report["gate"]["passed"],
+            "skills_digest": skills_digest, "gate_passed": report["gate"]["passed"],
             "metrics": {key: value for key, value in report.items()
                         if key.endswith("_rate") or key.endswith("_recall") or key.endswith("_count")},
         })
     except Exception as exc:
         ledger.append("quality_evaluation_failed", {
             "cases_digest": case_digest, "thresholds_digest": threshold_digest,
-            "error_type": type(exc).__name__, "error": str(exc)[:500],
+            "skills_digest": skills_digest, "error_type": type(exc).__name__, "error": str(exc)[:500],
         })
         raise
     rendered = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
