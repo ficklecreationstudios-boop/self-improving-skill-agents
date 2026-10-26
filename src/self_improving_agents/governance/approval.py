@@ -6,6 +6,7 @@ import re
 import tempfile
 from ..models import Proposal, Approval, digest_text
 from ..audit import AuditLedger
+from ..skills import discover_skills
 
 class GovernanceError(RuntimeError):
     pass
@@ -26,15 +27,14 @@ class Governance:
         if not re.fullmatch(r"[a-zA-Z0-9_-]+", skill_id):
             raise GovernanceError("Unsafe skill id")
         matches = []
-        for candidate in self.skill_root.rglob("SKILL.md"):
-            try:
-                resolved = candidate.resolve(strict=True)
-                resolved.relative_to(self.skill_root)
-            except (OSError, ValueError):
-                continue
-            if resolved.parent.name == skill_id:
-                matches.append(resolved)
-        # A proposal must never silently update the first of multiple ambiguous skills.
+        for skill in discover_skills(self.skill_root):
+            if skill.skill_id == skill_id:
+                candidate = Path(skill.path).resolve(strict=True)
+                try:
+                    candidate.relative_to(self.skill_root)
+                except ValueError:
+                    continue
+                matches.append(candidate)
         unique = list(dict.fromkeys(matches))
         if len(unique) != 1:
             raise GovernanceError(f"Expected exactly one skill target for {skill_id!r}; found {len(unique)}")
@@ -77,7 +77,6 @@ class Governance:
         self.archive_root.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         archive = self.archive_root / f"{proposal.skill_id}.{stamp}.SKILL.md"
-        # Exclusive create avoids overwriting an archive even under an improbable name collision.
         with archive.open("x", encoding="utf-8", newline="\n") as stream:
             stream.write(current)
 
@@ -91,7 +90,6 @@ class Governance:
                 "new_digest": digest_text(proposal.proposed_content),
             })
         except Exception:
-            # Best-effort rollback: never intentionally leave the new skill active if audit append fails.
             self._atomic_write(target, current)
             raise
         return target

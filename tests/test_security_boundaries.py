@@ -28,8 +28,8 @@ def test_malformed_audit_is_reported_invalid_not_crashed(tmp_path):
 
 def test_duplicate_skill_ids_are_rejected_before_any_update(tmp_path):
     root = tmp_path / "skills"
-    first = root / "one"; first.mkdir(parents=True)
-    second = root / "two"; second.mkdir(parents=True)
+    first = root / "group_a" / "demo"; first.mkdir(parents=True)
+    second = root / "group_b" / "demo"; second.mkdir(parents=True)
     content = "---\nid: demo\n---\nold"
     (first / "SKILL.md").write_text(content, encoding="utf-8")
     (second / "SKILL.md").write_text(content, encoding="utf-8")
