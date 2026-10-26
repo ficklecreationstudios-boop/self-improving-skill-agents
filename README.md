@@ -3,7 +3,7 @@
 Local-first Python framework for routing tasks to specialist agents, selectively loading skills, running a bounded allowlisted tool loop, recording feedback, generating screened skill-update proposals, and requiring signed approval before any skill mutation.
 
 ## Safety principles
-- Standard-library core; Ollama is optional and explicitly configured.
+- Standard-library runtime; Ollama is optional and explicitly configured.
 - Skills, tasks, feedback, files and tool results are untrusted data.
 - If no model is configured, a task is audited as not executed; a configuration notice is never misrepresented as a model answer.
 - The optional agent loop exposes only a bounded calculator and read-only workspace file/search capabilities. No shell, network, write, delete, or arbitrary code execution is exposed.
@@ -14,13 +14,15 @@ Local-first Python framework for routing tasks to specialist agents, selectively
 - Skill updates archive prior content, journal transaction state, and write a hash-chained audit event. `skill-agents recover` reconciles interrupted updates.
 - Audit writes are serialized with a cross-process lock and fsync. Hash chaining is tamper-evident, not immutable external storage.
 
-## Quick start
+## Reproducible test setup
 ```bash
 python -m venv .venv
-python -m pip install -e '.[test]'
+python -m pip install -r requirements-test.lock
+python -m pip install --no-build-isolation -e .
 pytest -q
 PYTHONPATH=src python -m self_improving_agents.cli --help
 ```
+The CI test/build dependency set is pinned in `requirements-test.lock`.
 
 ## Bounded tool agent
 ```powershell
