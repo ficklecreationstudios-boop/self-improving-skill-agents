@@ -15,12 +15,10 @@ Local-first Python framework for routing tasks to specialist agents, selectively
 - Audit writes are serialized with a cross-process lock and fsync. Hash chaining is tamper-evident, not immutable external storage.
 
 ## Reproducible test setup
-```bash
-python -m venv .venv
+```powershell
 python -m pip install -r requirements-test.lock
 python -m pip install --no-build-isolation -e .
 pytest -q
-PYTHONPATH=src python -m self_improving_agents.cli --help
 ```
 The CI test/build dependency set is pinned in `requirements-test.lock`.
 
@@ -58,7 +56,7 @@ skill-agents learn-from-feedback --skill-id software_engineering --task-id task-
 ```
 Every case is run against the candidate; any failed substring assertion blocks proposal creation. Freeze cases before tuning and keep a separate independent holdout.
 
-## Live local-model test
-On the machine running Ollama, set `OLLAMA_MODEL` and run `RUN_OLLAMA_INTEGRATION=1 pytest -q tests/test_ollama_live.py`. CI deliberately does not claim to have tested your local model.
+## Verify Ollama on Windows
+The GitHub runner cannot access Ollama on your PC. Activate the project venv, set `OLLAMA_MODEL` to an installed local tag, and run `./scripts/verify-local-ollama.ps1`. See `docs/LOCAL_OLLAMA_VERIFICATION.md`. The script does not download a model or change active skills.
 
 See `docs/DONE_CRITERIA.md`, `docs/ROADMAP.md`, and `SECURITY.md`. This remains a development system, not production-ready security software.
