@@ -1,5 +1,5 @@
 """Command-line entry point."""
-import argparse, json, os, secrets
+import argparse, json, os, secrets, re
 from pathlib import Path
 from .models import Task, Proposal, Approval
 from .orchestrator import run_task, ModelNotConfiguredError
@@ -9,7 +9,7 @@ from .skills import discover_skills, select_skills
 from .audit import AuditLedger
 from .agents.review import propose_skill_update
 from .governance.approval import Governance
-from .approval_auth import sign_approval, validate_key, ApprovalSignatureError
+from .approval_auth import sign_approval, validate_key, key_identifier, ApprovalSignatureError
 from .learning import create_candidate_proposal, write_proposal, load_cases, LearningGateError
 from .quality_evaluation import evaluate_file
 from .ollama import OllamaAdapter
@@ -57,6 +57,11 @@ def main() -> None:
     approve.add_argument("proposal_file"); approve.add_argument("--key-file", required=True)
     approve.add_argument("--approver", required=True); approve.add_argument("--reason", required=True)
     approve.add_argument("--approval-output", required=True); approve.add_argument("--approve", action="store_true", required=True)
+    approve.add_argument("--audit", default="data/audit.jsonl")
+    revoke = sub.add_parser("revoke-approval-key", help="Revoke an approval key identifier in the audit ledger")
+    revoke.add_argument("key_id", help="Full SHA-256 key identifier printed by init-approval-key")
+    revoke.add_argument("--reason", required=True); revoke.add_argument("--audit", default="data/audit.jsonl")
+    revoke.add_argument("--archive", default="data/skill-archive", help="Must match the archive path used by apply-proposal")
     apply = sub.add_parser("apply-proposal", help="Apply a proposal with a valid signed approval")
     apply.add_argument("proposal_file"); apply.add_argument("approval_file")
     apply.add_argument("--key-file", required=True); apply.add_argument("--skills", default="skills")
@@ -131,9 +136,18 @@ def main() -> None:
         except FileExistsError:
             raise SystemExit("Refusing to overwrite an existing approval key")
         print(json.dumps({"status": "key_created", "path": str(destination),
-                          "warning": "Protect this key outside the repository; anyone holding it can sign approvals."}, indent=2))
+                          "key_id": key_identifier(destination.read_bytes()),
+                          "warning": "Protect this key outside the repository; anyone holding it can sign approvals. The key ID is a public fingerprint, not the key."}, indent=2))
     elif args.command == "approve-proposal":
         key = read_approval_key(args.key_file)
+        ledger = AuditLedger(args.audit)
+        if not ledger.verify():
+            raise SystemExit("Audit ledger is invalid; refusing to sign")
+        key_id = key_identifier(key)
+        if any(event.get("type") == "approval_key_revoked"
+               and event.get("payload", {}).get("key_id") == key_id
+               for event in ledger._events()):
+            raise SystemExit("Approval key is revoked; refusing to sign")
         item = Proposal(**json.loads(Path(args.proposal_file).read_text(encoding="utf-8")))
         if item.sealed().proposal_digest != item.proposal_digest:
             raise SystemExit("Proposal digest is invalid; refusing to sign")
@@ -143,8 +157,20 @@ def main() -> None:
             raise SystemExit(str(exc)) from exc
         destination = Path(args.approval_output); destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(json.dumps(approval.__dict__, indent=2), encoding="utf-8")
+        ledger.append("proposal_approval_signed", {
+            "proposal_digest": item.proposal_digest, "approver": approval.approver,
+            "key_id": approval.key_id, "approval_signature_digest": __import__("hashlib").sha256(approval.signature.encode("utf-8")).hexdigest(),
+            "reason": approval.reason,
+        })
         print(json.dumps({"status": "signed_approval_created", "approval_file": str(destination),
-                          "proposal_digest": item.proposal_digest}, indent=2))
+                          "proposal_digest": item.proposal_digest, "key_id": approval.key_id}, indent=2))
+    elif args.command == "revoke-approval-key":
+        ledger = AuditLedger(args.audit)
+        try:
+            result = Governance(".", args.archive, ledger).revoke_approval_key(args.key_id, args.reason)
+        except RuntimeError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(json.dumps(result, indent=2))
     elif args.command == "apply-proposal":
         key = read_approval_key(args.key_file)
         item = Proposal(**json.loads(Path(args.proposal_file).read_text(encoding="utf-8")))

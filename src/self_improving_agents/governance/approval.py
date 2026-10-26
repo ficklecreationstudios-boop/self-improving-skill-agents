@@ -9,7 +9,7 @@ import tempfile
 from ..models import Proposal, Approval, digest_text
 from ..audit import AuditLedger
 from ..skills import discover_skills
-from ..approval_auth import sign_approval, verify_approval, ApprovalSignatureError
+from ..approval_auth import sign_approval, verify_approval, key_identifier, ApprovalSignatureError
 
 class GovernanceError(RuntimeError):
     pass
@@ -48,18 +48,54 @@ class Governance:
                 finally:
                     fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
+    def _assert_key_active(self, key: bytes) -> str:
+        if not self.audit.verify():
+            raise GovernanceError("Audit ledger failed integrity verification; refusing approval-key use")
+        key_id = key_identifier(key)
+        try:
+            revoked = {
+                event.get("payload", {}).get("key_id")
+                for event in self.audit._events()
+                if event.get("type") == "approval_key_revoked"
+            }
+        except Exception as exc:
+            raise GovernanceError("Cannot read approval-key revocation state; failing closed") from exc
+        if key_id in revoked:
+            raise GovernanceError("Approval key is revoked; refusing to sign or apply proposals")
+        return key_id
+
     def issue_approval(self, proposal: Proposal, approver: str, approved: bool, reason: str = "") -> Approval:
-        if not approver.strip():
+        if not isinstance(approver, str) or not approver.strip():
             raise GovernanceError("Approver identity label must be non-empty")
         if not approved:
             return Approval(proposal.proposal_digest, approver.strip(), False, reason)
         if self.approval_key is None:
             raise GovernanceError("Approval signing key is not configured")
         try:
+            self._assert_key_active(self.approval_key)
             return sign_approval(Approval(proposal.proposal_digest, approver.strip(), True, reason),
                                  self.approval_key)
         except ApprovalSignatureError as exc:
             raise GovernanceError(str(exc)) from exc
+
+    def revoke_approval_key(self, key_id: str, reason: str) -> dict:
+        """Record key revocation under the same governance lock used by apply()."""
+        if not isinstance(key_id, str) or not re.fullmatch(r"[0-9a-f]{64}", key_id):
+            raise GovernanceError("key_id must be a full 64-character lowercase SHA-256 identifier")
+        if not isinstance(reason, str) or not reason.strip():
+            raise GovernanceError("Revocation reason must be non-empty")
+        with self._update_lock():
+            if not self.audit.verify():
+                raise GovernanceError("Audit ledger is invalid; refusing to revoke key")
+            events = self.audit._events()
+            if any(event.get("type") == "approval_key_revoked"
+                   and event.get("payload", {}).get("key_id") == key_id for event in events):
+                return {"status": "already_revoked", "key_id": key_id}
+            event = self.audit.append("approval_key_revoked", {
+                "key_id": key_id, "reason": reason.strip(),
+            })
+            return {"status": "key_revoked", "key_id": key_id,
+                    "audit_seq": event["seq"], "audit_valid": self.audit.verify()}
 
     def _find_target(self, skill_id: str) -> Path:
         if not re.fullmatch(r"[a-zA-Z0-9_-]+", skill_id):
@@ -178,7 +214,12 @@ class Governance:
             return self._apply_locked(proposal, approval)
 
     def _apply_locked(self, proposal: Proposal, approval: Approval) -> Path:
-        if self.approval_key is None or not verify_approval(approval, self.approval_key):
+        if self.approval_key is None:
+            raise GovernanceError("Approval signing key is not configured")
+        self._assert_key_active(self.approval_key)
+        if approval.key_id and approval.key_id != key_identifier(self.approval_key):
+            raise GovernanceError("Approval key identifier does not match the configured key; signature is invalid")
+        if not verify_approval(approval, self.approval_key):
             raise GovernanceError("Approval signature is missing or invalid")
         if approval.proposal_digest != proposal.proposal_digest:
             raise GovernanceError("Approval does not bind this exact proposal")

@@ -15,6 +15,8 @@ class CapabilityRegistry:
         self.workspace = Path(workspace).resolve(strict=True)
         if not self.workspace.is_dir():
             raise CapabilityError("Workspace must be an existing directory")
+        if isinstance(max_file_bytes, bool) or not isinstance(max_file_bytes, int) or max_file_bytes <= 0:
+            raise CapabilityError("max_file_bytes must be a positive integer")
         self.max_file_bytes = max_file_bytes
         self._tools = {"calculator": self._calculator, "read_text_file": self._read_text_file,
                        "search_text": self._search_text}
@@ -28,21 +30,26 @@ class CapabilityRegistry:
         ]
 
     def invoke(self, name: str, arguments: Any) -> dict[str, Any]:
-        if name not in self._tools:
-            return {"ok": False, "error": f"Capability is not allowlisted: {name}"}
+        if not isinstance(name, str) or name not in self._tools:
+            return {"ok": False, "error": f"Capability is not allowlisted: {name!r}"}
         if not isinstance(arguments, dict):
             return {"ok": False, "error": "Tool arguments must be a JSON object"}
         try:
             return {"ok": True, "result": self._tools[name](arguments)}
         except CapabilityError as exc:
             return {"ok": False, "error": str(exc)}
+        except (OSError, UnicodeError, ValueError, RuntimeError) as exc:
+            return {"ok": False, "error": f"Capability failed closed: {type(exc).__name__}"}
 
     def _contained_file(self, relative: str) -> Path:
         if not isinstance(relative, str) or not relative.strip():
             raise CapabilityError("path must be a non-empty relative string")
         if Path(relative).is_absolute():
             raise CapabilityError("absolute paths are not accepted; use a workspace-relative path")
-        candidate = (self.workspace / relative).resolve(strict=True)
+        try:
+            candidate = (self.workspace / relative).resolve(strict=True)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise CapabilityError("Path could not be safely resolved") from exc
         try:
             candidate.relative_to(self.workspace)
         except ValueError as exc:

@@ -52,6 +52,7 @@ class Approval:
     approved: bool
     reason: str = ""
     signature: str = ""
+    key_id: str = ""
     def payload(self) -> dict[str, Any]:
         return {"proposal_digest": self.proposal_digest, "approver": self.approver,
-                "approved": self.approved, "reason": self.reason}
+                "approved": self.approved, "reason": self.reason, "key_id": self.key_id}

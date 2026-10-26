@@ -47,10 +47,11 @@ def test_invalid_audit_blocks_skill_update(tmp_path):
     content = "---\nid: demo\n---\nold"
     target = folder / "SKILL.md"; target.write_text(content, encoding="utf-8")
     ledger = AuditLedger(tmp_path / "audit.jsonl"); ledger.append("baseline", {"ok": True})
-    ledger.path.write_text("not-json\n", encoding="utf-8")
     governance = Governance(root, tmp_path / "archive", ledger, approval_key=KEY)
     proposal = propose_skill_update("demo", content, "new content", "test")
     approval = governance.issue_approval(proposal, "reviewer", True, "reviewed invalid-audit test")
+    # Corrupt the ledger after signing so the application path must reject it.
+    ledger.path.write_text("not-json\n", encoding="utf-8")
     with pytest.raises(GovernanceError, match="Audit ledger"):
         governance.apply(proposal, approval)
     assert target.read_text(encoding="utf-8") == content

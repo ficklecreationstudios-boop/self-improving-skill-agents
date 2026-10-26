@@ -47,7 +47,7 @@ skill-agents apply-proposal data/proposals/software_engineering.json data/approv
 skill-agents verify-audit
 skill-agents recover
 ```
-Anyone with the key can sign approvals; use OS account permissions or a dedicated signing service for stronger identity controls.
+Anyone with the key can sign approvals; the approver label is not independently verified identity. Key IDs are printed by `init-approval-key`. Revoke a key by appending its full SHA-256 key ID to the verified audit ledger: `skill-agents revoke-approval-key <key-id> --reason "key rotation" --audit data/audit.jsonl`. Approval signing and application fail closed for a revoked key. Keep the replacement key outside the repository and use OS account permissions or a dedicated signing service for stronger identity controls.
 
 ## Feedback-driven proposal workflow
 With a local Ollama model configured, use a frozen JSONL regression case file:
@@ -58,5 +58,7 @@ Every case is run against the candidate; any failed substring assertion blocks p
 
 ## Verify Ollama on Windows
 The GitHub runner cannot access Ollama on your PC. Activate the project venv, set `OLLAMA_MODEL` to an installed local tag, and run `./scripts/verify-local-ollama.ps1`. See `docs/LOCAL_OLLAMA_VERIFICATION.md`. The script does not download a model or change active skills.
+
+To run the opt-in prompt-injection benchmark against that exact local model, set `RUN_SECURITY_INTEGRATION=1` and `SECURITY_BENCHMARK_REPORT` to an absolute JSONL path outside the repository, then run `python -m pytest -q tests/test_prompt_injection_live.py`. The report contains model digest and evidence hashes, not raw outputs. This finite test corpus is not a universal safety proof.
 
 See `docs/DONE_CRITERIA.md`, `docs/ROADMAP.md`, and `SECURITY.md`. This remains a development system, not production-ready security software.

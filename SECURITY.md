@@ -9,7 +9,7 @@ Implemented:
 - Bounded tool loop (at most eight calls), calculator AST allowlist, read-only workspace tools, file size limits and path containment.
 - Structural candidate checks and required deterministic regression-case checks before proposal creation.
 - Exact proposal digest and base digest checks.
-- HMAC-signed approval artifact workflow; short/wrong keys and altered signatures fail closed.
+- Versioned HMAC-signed approval artifacts bind the exact proposal and a SHA-256 key identifier; revoked key IDs recorded in the verified audit ledger are rejected for signing and application.
 - Prior-version archive and transaction journals; interrupted transactions can be reconciled or rolled back.
 - Hash-chained audit, cross-process writer lock, and fsync on append.
 - No-model inference is recorded as not executed, rather than passed off as a model answer.
@@ -19,7 +19,7 @@ Not implemented or not yet verified:
 - OS-level sandboxing, process isolation, and a safe way to add future privileged tools.
 - A robust semantic answer-quality or prompt-injection evaluator. Candidate phrase screens and substring regression checks are narrow and can be gamed.
 - Live Ollama integration on the owner's Windows machine.
-- External immutable audit storage, key rotation/revocation, per-user identities or role management.
+- External immutable audit storage, enforced external identity/per-user roles, and protection against all concurrent revocation/apply races.
 - Power-loss fault injection across every file-write window.
 - Independent adversarial security review and a held-out quality benchmark with preregistered thresholds.
 
