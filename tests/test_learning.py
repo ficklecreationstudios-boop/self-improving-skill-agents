@@ -100,3 +100,67 @@ def test_feedback_loop_rejects_regression_failure_and_never_proposes(tmp_path):
     types = [json.loads(line)["type"] for line in ledger.path.read_text(encoding="utf-8").splitlines()]
     assert "skill_proposal_created" not in types
     assert "skill_candidate_rejected" in types
+
+
+def test_candidate_generation_failure_is_audited_and_active_skill_is_unchanged(tmp_path):
+    root = tmp_path / "skills"; folder = root / "demo"; folder.mkdir(parents=True)
+    current = "---\\nid: demo\\nname: Demo\\ndomain: general\\ntags: []\\n---\\nUse clear steps."
+    target = folder / "SKILL.md"; target.write_text(current, encoding="utf-8")
+    class FailingAdapter:
+        configured = True
+        def generate(self, _prompt):
+            raise TimeoutError("simulated model timeout")
+    ledger = AuditLedger(tmp_path / "audit.jsonl")
+    with pytest.raises(LearningGateError, match="Candidate generation failed"):
+        create_candidate_proposal(
+            skill_id="demo", skill_root=root, task_id="task-timeout", task_text="Explain",
+            output_text="answer", rating=1, feedback="Improve", adapter=FailingAdapter(),
+            ledger=ledger, holdout_cases=[{"case_id":"one", "task":"Explain"}],
+        )
+    assert target.read_text(encoding="utf-8") == current
+    events = [json.loads(line) for line in ledger.path.read_text(encoding="utf-8").splitlines()]
+    assert any(event["type"] == "skill_candidate_generation_failed" for event in events)
+    assert not any(event["type"] == "skill_proposal_created" for event in events)
+    assert ledger.verify()
+
+
+def test_candidate_regression_duplicate_ids_are_rejected_before_model_calls():
+    from self_improving_agents.learning import evaluate_candidate_behavior
+    class MustNotRunAdapter:
+        configured = True
+        def generate(self, _prompt):
+            raise AssertionError("duplicate cases must be rejected before model execution")
+    with pytest.raises(LearningGateError, match="duplicate regression case_id"):
+        evaluate_candidate_behavior(
+            skill_id="demo", candidate_content="candidate",
+            cases=[{"case_id":"same", "task":"first"}, {"case_id":"same", "task":"second"}],
+            adapter=MustNotRunAdapter(),
+        )
+
+
+def test_candidate_regression_model_failure_is_audited_and_never_proposes(tmp_path):
+    root = tmp_path / "skills"; folder = root / "demo"; folder.mkdir(parents=True)
+    current = "---\\nid: demo\\nname: Demo\\ndomain: general\\ntags: []\\n---\\nUse clear steps."
+    target = folder / "SKILL.md"; target.write_text(current, encoding="utf-8")
+    class SequenceFailureAdapter:
+        configured = True
+        def __init__(self): self.calls = 0
+        def generate(self, _prompt):
+            self.calls += 1
+            if self.calls == 1:
+                return "---\\nid: demo\\nname: Demo\\ndomain: general\\ntags: []\\n---\\nImproved steps."
+            raise TimeoutError("simulated regression evaluation timeout")
+    ledger = AuditLedger(tmp_path / "audit.jsonl")
+    with pytest.raises(LearningGateError, match="regression evaluation failed"):
+        create_candidate_proposal(
+            skill_id="demo", skill_root=root, task_id="task-regression-timeout", task_text="Explain",
+            output_text="answer", rating=1, feedback="Improve", adapter=SequenceFailureAdapter(),
+            ledger=ledger, holdout_cases=[{"case_id":"one", "task":"Explain"}],
+        )
+    assert target.read_text(encoding="utf-8") == current
+    events = [json.loads(line) for line in ledger.path.read_text(encoding="utf-8").splitlines()]
+    types = [event["type"] for event in events]
+    assert "skill_candidate_regression_failed" in types
+    assert "skill_candidate_rejected" in types
+    assert "skill_proposal_created" not in types
+    assert ledger.verify()
