@@ -104,3 +104,25 @@ def test_revoked_key_cannot_sign_or_apply_approval(tmp_path):
         gov.issue_approval(proposal, "reviewer", True, "try after revocation")
     assert target.read_text(encoding="utf-8") == original
     assert ledger.verify()
+
+
+def test_key_revocation_is_audited_idempotent_and_serialized(tmp_path):
+    target, ledger, gov = setup_governance(tmp_path)
+    original = target.read_text(encoding="utf-8")
+    proposal = propose_skill_update("demo", original, "---\\nid: demo\\n---\\nnew", "revocation API")
+    approval = gov.issue_approval(proposal, "reviewer", True, "reviewed before revocation")
+    result = gov.revoke_approval_key(approval.key_id, "rotate compromised test key")
+    assert result["status"] == "key_revoked"
+    assert ledger.verify()
+    assert gov.revoke_approval_key(approval.key_id, "repeat revocation")["status"] == "already_revoked"
+    with pytest.raises(GovernanceError, match="revoked"):
+        gov.apply(proposal, approval)
+    assert target.read_text(encoding="utf-8") == original
+
+
+def test_key_revocation_rejects_invalid_identifier_and_empty_reason(tmp_path):
+    _, _, gov = setup_governance(tmp_path)
+    with pytest.raises(GovernanceError, match="64-character"):
+        gov.revoke_approval_key("not-a-key-id", "reason")
+    with pytest.raises(GovernanceError, match="reason"):
+        gov.revoke_approval_key("a" * 64, "  ")
