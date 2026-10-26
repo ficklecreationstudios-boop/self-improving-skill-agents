@@ -41,6 +41,9 @@ These are deterministic integration tests using a fake adapter; they validate or
 
 ## D3 adversarial skill/input regression evidence
 
+- Added `tests/test_prompt_injection_live.py`, an opt-in local-model probe for skill-based instruction override, tool escalation, workspace traversal and canary disclosure. Run it on the owner's machine with `RUN_SECURITY_INTEGRATION=1` and `OLLAMA_MODEL` set to the exact local model tag; GitHub CI skips these live tests by design.
+- Added `tests/test_audit_multiprocess.py` to exercise concurrent independent-process audit writers. Its result is pending the integration branch's CI run.
+
 - Code/test commit: `e892608b5117d197bbec50fdffefe3e655460578`
 - Workflow: [GitHub Actions run 40377347096](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/actions/runs/40377347096)
 - Result: all four matrix jobs succeeded on Windows/Linux × Python 3.11/3.14.
