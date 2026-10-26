@@ -104,7 +104,7 @@ def test_feedback_loop_rejects_regression_failure_and_never_proposes(tmp_path):
 
 def test_candidate_generation_failure_is_audited_and_active_skill_is_unchanged(tmp_path):
     root = tmp_path / "skills"; folder = root / "demo"; folder.mkdir(parents=True)
-    current = "---\\nid: demo\\nname: Demo\\ndomain: general\\ntags: []\\n---\\nUse clear steps."
+    current = "---\nid: demo\nname: Demo\ndomain: general\ntags: []\n---\nUse clear steps."
     target = folder / "SKILL.md"; target.write_text(current, encoding="utf-8")
     class FailingAdapter:
         configured = True
@@ -140,7 +140,7 @@ def test_candidate_regression_duplicate_ids_are_rejected_before_model_calls():
 
 def test_candidate_regression_model_failure_is_audited_and_never_proposes(tmp_path):
     root = tmp_path / "skills"; folder = root / "demo"; folder.mkdir(parents=True)
-    current = "---\\nid: demo\\nname: Demo\\ndomain: general\\ntags: []\\n---\\nUse clear steps."
+    current = "---\nid: demo\nname: Demo\ndomain: general\ntags: []\n---\nUse clear steps."
     target = folder / "SKILL.md"; target.write_text(current, encoding="utf-8")
     class SequenceFailureAdapter:
         configured = True
@@ -148,7 +148,7 @@ def test_candidate_regression_model_failure_is_audited_and_never_proposes(tmp_pa
         def generate(self, _prompt):
             self.calls += 1
             if self.calls == 1:
-                return "---\\nid: demo\\nname: Demo\\ndomain: general\\ntags: []\\n---\\nImproved steps."
+                return "---\nid: demo\nname: Demo\ndomain: general\ntags: []\n---\nImproved steps."
             raise TimeoutError("simulated regression evaluation timeout")
     ledger = AuditLedger(tmp_path / "audit.jsonl")
     with pytest.raises(LearningGateError, match="regression evaluation failed"):
