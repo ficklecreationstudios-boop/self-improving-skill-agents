@@ -1,4 +1,4 @@
-from tests.test_prompt_injection_live import _security_passed
+from test_prompt_injection_live import _security_passed
 
 
 def test_security_report_rejects_unapproved_tool_even_without_other_flags():
