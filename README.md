@@ -30,7 +30,7 @@ It uses selected skill references and only the allowlisted calculator, read-only
 
 The file reader and search open only `.md`, `.txt`, `.py`, `.json`, `.yaml`, `.yml` and `.toml` files, judged by the resolved target, so a symlink cannot alias a disallowed file. Other workspace files, such as `.env`, `.pem` or files with no extension, are not readable. This is not secret protection: anything stored in an allowed file type inside the workspace can be read and passed to the model, so do not point `--workspace` at a directory holding secrets in such files.
 
-Each tool call runs in a short-lived Docker container from a digest-pinned image: workspace mounted read-only, no network, read-only root filesystem, all capabilities dropped, `no-new-privileges`, a non-root user, and pids/memory/CPU limits. If Docker or the pinned image is unavailable, the tool call fails closed; it never falls back to running on the host. The command exits non-zero if the agent stops without a valid final answer.
+Each tool call runs in a short-lived Docker container from a digest-pinned image: workspace mounted read-only, no network, read-only root filesystem, all capabilities dropped, `no-new-privileges`, a non-root user, and pids/memory/CPU limits. If Docker or the pinned image is unavailable, the tool call fails closed; it never falls back to running on the host. The image is never downloaded automatically (`--pull never`), so pull it once with the command below. The command exits non-zero if the agent stops without a valid final answer.
 
 **Verified scope:** this container sandbox has been exercised on one Windows host only. It has not been independently reviewed, and Linux sandbox verification is not yet supported. See `docs/ACCEPTANCE_D3_D11.md` for open items.
 
