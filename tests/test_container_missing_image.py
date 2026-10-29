@@ -24,6 +24,11 @@ def test_missing_image_fails_closed_without_pull(monkeypatch):
                               capture_output=True, timeout=10, check=False)
         if info.returncode != 0:
             pytest.skip("Docker daemon is unavailable")
+        # Same host gate as the other real-Docker tests: run only where the sandbox is set up.
+        pinned = subprocess.run(["docker.exe", "image", "inspect", sandbox.PINNED_IMAGE],
+                                capture_output=True, timeout=5, check=False)
+        if pinned.returncode != 0:
+            pytest.skip("Pinned sandbox image is unavailable")
         present = subprocess.run(["docker.exe", "image", "inspect", MISSING_IMAGE],
                                  capture_output=True, timeout=5, check=False)
     except (OSError, subprocess.SubprocessError):
