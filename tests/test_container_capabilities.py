@@ -188,6 +188,8 @@ def test_security_flags_are_present(tmp_path):
     command = registry._base_command("test-container")
 
     assert registry.image == sandbox.PINNED_IMAGE
+    assert "--pull" in command and command[command.index("--pull") + 1] == "never"
+    assert command.index("--pull") < command.index(registry.image)
     assert "--network" in command and command[command.index("--network") + 1] == "none"
     assert "--read-only" in command
     assert "--cap-drop" in command and command[command.index("--cap-drop") + 1] == "ALL"

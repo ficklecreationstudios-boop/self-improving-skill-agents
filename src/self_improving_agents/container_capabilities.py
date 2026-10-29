@@ -323,6 +323,8 @@ class ContainerCapabilityRegistry:
             self.docker_executable, "run", "-i",
             "--name", container_name,
             "--rm",
+            # Never let the daemon download a missing image; fail closed instead.
+            "--pull", "never",
             "--network", "none",
             "--read-only",
             "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
