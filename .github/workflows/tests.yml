@@ -1,7 +1,7 @@
 name: tests
 on:
   push:
-    branches: ["dev/**", "main"]
+    branches: ["dev/**", "main", "work/d8-os-sandbox-20261027"]
   pull_request:
   workflow_dispatch:
 
