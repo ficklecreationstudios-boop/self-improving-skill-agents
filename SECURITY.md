@@ -1,6 +1,6 @@
 # Security model
 
-Task text, feedback, skill files, repository documents, workspace files, and tool results are untrusted input. The optional agent loop exposes only three allowlisted capabilities: bounded arithmetic, UTF-8 file reads inside a configured workspace, and text search inside that workspace. It has no shell, network, write, delete, or arbitrary-code tool. This is application-level least privilege, not an OS sandbox against a hostile local process or a compromised interpreter.
+Task text, feedback, skill files, repository documents, workspace files, and tool results are untrusted input. The optional agent loop exposes only three allowlisted capabilities: bounded arithmetic, UTF-8 file reads inside a configured workspace, and text search inside that workspace. It has no shell, network, write, delete, or arbitrary-code tool. In the `agent` CLI, each tool call runs in a digest-pinned Docker container with no network, a read-only root filesystem and workspace mount, all capabilities dropped, `no-new-privileges`, a non-root user, and pids/memory/CPU limits; Docker failures fail closed. This container sandbox has been tested on one Windows host only and has not been independently reviewed.
 
 A proposal is inert data. Applying it requires a valid HMAC-SHA256 signature over the exact approval payload, bound to the proposal digest, plus a current base-digest check. The signing key must be stored outside the repository. HMAC authenticates possession of a shared secret, not a human identity; anyone who obtains the key can sign approvals. OS-level account permissions or a separate signing service are still needed for stronger identity boundaries.
 
@@ -16,7 +16,7 @@ Implemented:
 - Network access occurs only when an Ollama model is explicitly configured.
 
 Not implemented or not yet verified:
-- OS-level sandboxing, process isolation, and a safe way to add future privileged tools.
+- Independent review of the container sandbox, its support on platforms other than the tested Windows host, and a safe way to add future privileged tools.
 - A robust semantic answer-quality or prompt-injection evaluator. Candidate phrase screens and substring regression checks are narrow and can be gamed.
 - Live Ollama integration on the owner's Windows machine.
 - External immutable audit storage, enforced external identity/per-user roles, and protection against all concurrent revocation/apply races.

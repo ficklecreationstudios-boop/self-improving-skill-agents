@@ -63,6 +63,18 @@ Limitations: the prompt-injection fixture checks framing of untrusted content; i
 
 This CI result does not close D3–D11 by itself. The live prompt-injection suite still requires execution on the owner's local Ollama model; D5 still requires power-loss/filesystem durability testing; D7 requires an owner-approved labeled holdout and independent semantic adjudication; D8 requires OS-level sandbox testing; D9 requires a clean-machine walkthrough; D10 requires externally verified identity/roles; and D11 requires independent review plus explicit owner sign-off. The acceptance checklist intentionally keeps those gates PARTIAL or OPEN until that evidence exists.
 
+## D8 container sandbox candidate evidence - 2026-10-29
+
+- Candidate commit: `030a665f695c1c980c7461f5d366c4eaac0e3be8` on `work/d8-os-sandbox-20261027` (not merged).
+- CI run [40890733715](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/actions/runs/40890733715): Windows/Linux × Python 3.11/3.14, all four jobs succeeded. Per-job test counts were not recorded. The real-Docker sandbox tests are not exercised on hosted runners: they invoke `docker.exe` (absent on Linux) and need the pinned image. The previous run, [40889434025](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/actions/runs/40889434025) on `06960e2`, failed in all four jobs on a test-import error that `030a665` fixes.
+- Owner's Windows host, exact `030a665` tree, plain `pytest -q` in a fresh virtual environment with `D8_CONTAINER_TEST_ROOT` set: **154 passed, 11 skipped**. Skips: 5 symlink tests (runner lacked the symlink privilege) and 6 opt-in live-model tests. The real-Docker OS sandbox probe, container integration and mount-escape tests passed in this run.
+- Symlink tests at `030a665`, elevated owner shell: **5 passed**, 0 skipped.
+- Live prompt-injection benchmark at `030a665` (`qwen3:8b`, digest `500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41`, `OLLAMA_THINK=false`): **5/5 passed**, run separately and combined. In four cases the model made no tool call, so these results do not distinguish refusal from non-attempt.
+- Live Ollama integration test at `555a83a` (application code identical to `030a665`): passed with `OLLAMA_THINK` unset and with `false`.
+- Evidence records with SHA-256 hashes are kept outside the repository (`D:\d8_os_test_temp`, `commit-555a83a-evidence-record.md`).
+
+This does not close D3 or D8. Still open: refusal-vs-non-attempt testing, live tests through the container path, Linux sandbox support, and independent security/escape review.
+
 ## Implemented and tested (baseline code)
 
 - Feedback-to-candidate-to-inert-proposal flow with structural screening and a required regression-case file.
@@ -76,7 +88,7 @@ This CI result does not close D3–D11 by itself. The live prompt-injection suit
 
 - Independent held-out quality and safety evaluation with thresholds chosen for the actual deployment risk.
 - Robust semantic answer-quality and prompt-injection evaluation. Current phrase-based checks are intentionally limited.
-- OS-level sandboxing, independent operator identity/roles, key revocation and external immutable audit storage.
+- Independent review and non-Windows verification of the container sandbox; independent operator identity/roles, key revocation and external immutable audit storage.
 - Power-loss fault injection across every transaction boundary, clean-machine operational walkthrough, and independent security review.
 
 No universal correctness, 100% safety, or production-readiness claim is supported by the current evidence.

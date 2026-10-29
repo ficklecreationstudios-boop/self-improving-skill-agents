@@ -26,7 +26,16 @@ The CI test/build dependency set is pinned in `requirements-test.lock`.
 ```powershell
 skill-agents agent "Find where this project defines its audit event format" --workspace . --skills skills --max-steps 4
 ```
-It uses selected skill references and only the allowlisted calculator, read-only file reader, and workspace search. This is application-level least privilege, not an OS sandbox against a hostile local process.
+It uses selected skill references and only the allowlisted calculator, read-only file reader, and workspace search. `--workspace` is required.
+
+Each tool call runs in a short-lived Docker container from a digest-pinned image: workspace mounted read-only, no network, read-only root filesystem, all capabilities dropped, `no-new-privileges`, a non-root user, and pids/memory/CPU limits. If Docker or the pinned image is unavailable, the tool call fails closed; it never falls back to running on the host. The command exits non-zero if the agent stops without a valid final answer.
+
+**Verified scope:** this container sandbox has been exercised on one Windows host only. It has not been independently reviewed, and Linux sandbox verification is not yet supported. See `docs/ACCEPTANCE_D3_D11.md` for open items.
+
+Prerequisite: Docker Engine and the pinned image:
+```powershell
+docker pull python@sha256:0dd364ba7e10242f07755449e3a3d0e35f9efd987952737b90def6709ab0c5ce
+```
 
 ## Quality evaluation
 Freeze a JSONL dataset and a JSON threshold file *before* running the evaluation. Cases may contain `task`, `domain`, `must_include`, `must_not_include`, `expected_abstain`, and `expected_skill_id`. The threshold file sets one or more values between 0 and 1, e.g. `{"minimum_execution_success_rate": 0.99, "maximum_forbidden_phrase_violation_rate": 0.0}` (illustrative only; set thresholds for the actual risk before testing).
