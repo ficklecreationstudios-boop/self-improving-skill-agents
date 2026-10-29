@@ -38,6 +38,7 @@ def main() -> None:
     evaluate.add_argument("--skills", default="skills"); evaluate.add_argument("--audit", default="data/evaluation-audit.jsonl")
     evaluate.add_argument("--output", required=True)
     audit = sub.add_parser("verify-audit", help="Verify the hash-chain audit ledger"); audit.add_argument("--audit", default="data/audit.jsonl")
+    recover_audit = sub.add_parser("recover-audit", help="Repair a torn final audit line after a crash, preserving the original"); recover_audit.add_argument("--audit", default="data/audit.jsonl")
     recover = sub.add_parser("recover", help="Recover interrupted skill updates from transaction journals")
     recover.add_argument("--skills", default="skills"); recover.add_argument("--archive", default="data/skill-archive"); recover.add_argument("--audit", default="data/audit.jsonl")
     bench = sub.add_parser("benchmark", help="Compare skill context proxy")
@@ -99,6 +100,11 @@ def main() -> None:
         print(json.dumps({key: value for key, value in report.items() if key != "cases"}, indent=2))
         print(f"Full per-case report written to {args.output}")
     elif args.command == "verify-audit": print("VALID" if AuditLedger(args.audit).verify() else "INVALID")
+    elif args.command == "recover-audit":
+        result = AuditLedger(args.audit).recover_torn_tail()
+        print(json.dumps(result, indent=2))
+        if result["status"] == "refused":
+            raise SystemExit(2)
     elif args.command == "recover":
         results = Governance(args.skills, args.archive, AuditLedger(args.audit)).recover_pending()
         print(json.dumps({"recovered": results, "audit_valid": AuditLedger(args.audit).verify()}, indent=2))
