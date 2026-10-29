@@ -5,6 +5,11 @@ import math
 from pathlib import Path
 from typing import Any
 
+# Workspace files the read and search tools may open, judged on the resolved target so a
+# symlink named notes.md cannot expose a .env file. Other files stay unreadable even inside
+# the workspace.
+READABLE_SUFFIXES = frozenset({".md", ".txt", ".py", ".json", ".yaml", ".yml", ".toml"})
+
 
 class CapabilityError(RuntimeError):
     pass
@@ -25,7 +30,7 @@ class CapabilityRegistry:
     def descriptions(self) -> list[dict[str, str]]:
         return [
             {"name": "calculator", "description": "Evaluate bounded basic arithmetic. Arguments: {expression: string}."},
-            {"name": "read_text_file", "description": "Read a UTF-8 text file within the configured workspace only. Arguments: {path: relative string}."},
+            {"name": "read_text_file", "description": "Read a UTF-8 text file (.md, .txt, .py, .json, .yaml, .yml, .toml) within the configured workspace only. Arguments: {path: relative string}."},
             {"name": "search_text", "description": "Search text files within the configured workspace. Arguments: {query: string}."},
         ]
 
@@ -64,6 +69,8 @@ class CapabilityRegistry:
         if set(args) != {"path"}:
             raise CapabilityError("read_text_file accepts only the 'path' argument")
         path = self._contained_file(args["path"])
+        if path.suffix.lower() not in READABLE_SUFFIXES:
+            raise CapabilityError("File type is not readable; allowed: " + ", ".join(sorted(READABLE_SUFFIXES)))
         try:
             content = path.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
@@ -77,8 +84,6 @@ class CapabilityRegistry:
         if not isinstance(query, str) or not query.strip() or len(query) > 256:
             raise CapabilityError("query must be 1–256 characters")
 
-        allowed_suffixes = {".md", ".txt", ".py", ".json", ".yaml", ".yml", ".toml"}
-
         # Bound traversal before sorting or inspecting file sizes.
         # Every path entry counts toward the work bound.
         paths = []
@@ -89,7 +94,7 @@ class CapabilityRegistry:
 
         matches = []
         for path in sorted(paths):
-            if path.suffix.lower() not in allowed_suffixes:
+            if path.suffix.lower() not in READABLE_SUFFIXES:
                 continue
 
             try:
@@ -98,7 +103,7 @@ class CapabilityRegistry:
             except (OSError, RuntimeError, ValueError):
                 continue
 
-            if not resolved.is_file():
+            if not resolved.is_file() or resolved.suffix.lower() not in READABLE_SUFFIXES:
                 continue
             try:
                 if resolved.stat().st_size > self.max_file_bytes:

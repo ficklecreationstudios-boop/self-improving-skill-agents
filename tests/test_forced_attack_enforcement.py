@@ -115,6 +115,16 @@ def _assert_rejected_without_leak(result, adapter, events, expected_calls):
     assert all(CANARY not in json.dumps(call["result"]) for call in result.tool_calls)
 
 
+DENIED_WORKSPACE_FILES = [".env", "deploy.env", "server.pem", "private.key", "id_rsa",
+                          "notes.txt.bak", "config.ini", "Makefile"]
+
+
+def _write_denied_files(workspace):
+    for name in DENIED_WORKSPACE_FILES:
+        (workspace / name).write_text(CANARY, encoding="utf-8")
+    return [(workspace / name).resolve() for name in DENIED_WORKSPACE_FILES]
+
+
 def _traversal_paths(outside):
     return [
         "../outside-canary.txt",
@@ -169,6 +179,52 @@ def test_in_process_secret_search_never_returns_outside_canary(tmp_path, host_re
     assert all(CANARY not in prompt for prompt in adapter.prompts)
     assert outside.resolve() not in host_reads
     assert (workspace / "deploy.env").resolve() not in host_reads
+
+
+def test_in_process_denies_reading_non_text_workspace_files(tmp_path, host_reads):
+    workspace, _, _ = _layout(tmp_path)
+    denied = _write_denied_files(workspace)
+    calls = [("read_text_file", {"path": name}) for name in DENIED_WORKSPACE_FILES]
+
+    result, adapter, events = _run_attack(CapabilityRegistry(workspace), tmp_path, *calls)
+
+    _assert_rejected_without_leak(result, adapter, events, len(calls))
+    for call in result.tool_calls:
+        assert "File type is not readable" in call["result"]["error"]
+    assert not set(denied) & set(host_reads)
+
+
+def test_in_process_still_reads_allowed_text_types(tmp_path):
+    workspace, _, _ = _layout(tmp_path)
+    (workspace / "README.MD").write_text("upper-case suffix", encoding="utf-8")
+    registry = CapabilityRegistry(workspace)
+
+    assert registry.invoke("read_text_file", {"path": "notes.txt"})["result"]["content"] == "ordinary project notes"
+    assert registry.invoke("read_text_file", {"path": "README.MD"})["result"]["content"] == "upper-case suffix"
+
+
+def test_in_process_symlink_alias_cannot_expose_denied_file(tmp_path, host_reads):
+    workspace, _, _ = _layout(tmp_path)
+    secret = workspace / "deploy.env"
+    secret.write_text(CANARY, encoding="utf-8")
+    try:
+        (workspace / "leak.md").symlink_to(secret)
+    except OSError as exc:
+        pytest.skip(f"Symlink creation unavailable on this runner: {exc}")
+
+    result, adapter, events = _run_attack(
+        CapabilityRegistry(workspace), tmp_path,
+        ("read_text_file", {"path": "leak.md"}),
+        *[("search_text", {"query": query}) for query in SECRET_QUERIES],
+    )
+
+    assert result.tool_calls[0]["result"]["ok"] is False
+    assert "File type is not readable" in result.tool_calls[0]["result"]["error"]
+    for call in result.tool_calls[1:]:
+        assert call["result"]["result"]["matches"] == []
+    assert CANARY not in result.output
+    assert all(CANARY not in prompt for prompt in adapter.prompts)
+    assert secret.resolve() not in host_reads
 
 
 # --- Container registry: rejection before any container launch ------------------------
@@ -234,6 +290,19 @@ def test_real_container_rejects_every_traversal_path_without_reading(real_contai
     result, adapter, events = _run_attack(registry, real_container_root, *calls)
 
     _assert_rejected_without_leak(result, adapter, events, len(calls))
+
+
+def test_real_container_denies_reading_non_text_workspace_files(real_container_root):
+    workspace, _, _ = _layout(real_container_root)
+    _write_denied_files(workspace)
+    calls = [("read_text_file", {"path": name}) for name in DENIED_WORKSPACE_FILES]
+    registry = sandbox.ContainerCapabilityRegistry(workspace, timeout_seconds=20)
+
+    result, adapter, events = _run_attack(registry, real_container_root, *calls)
+
+    _assert_rejected_without_leak(result, adapter, events, len(calls))
+    for call in result.tool_calls:
+        assert "File type is not readable" in call["result"]["error"]
 
 
 def test_real_container_secret_search_never_returns_outside_canary(real_container_root):
