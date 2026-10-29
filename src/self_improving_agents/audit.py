@@ -25,10 +25,8 @@ class AuditLedger:
         with self.lock_path.open("a+b") as lock_file:
             if os.name == "nt":
                 import msvcrt
-                lock_file.seek(0, os.SEEK_END)
-                if lock_file.tell() == 0:
-                    lock_file.write(b"0")
-                    lock_file.flush()
+                # Lock byte 0 without writing it first: Windows allows locking past EOF, and
+                # an unlocked initialisation write can collide with another holder's lock.
                 lock_file.seek(0)
                 msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
                 try:
