@@ -22,15 +22,26 @@ class FakeResponse:
 
 
 def test_unconfigured_adapter_does_not_make_network_request(monkeypatch):
+    monkeypatch.setenv("OLLAMA_MODEL", "environment-model")
+
     def unexpected(*_args, **_kwargs):
         raise AssertionError("network must not be used without an explicit model")
     monkeypatch.setattr(ollama, "urlopen", unexpected)
     adapter = ollama.OllamaAdapter(model=None)
     assert not adapter.configured
+    assert adapter.model is None
     assert "No Ollama model configured" in adapter.generate("hello")
 
 
+def test_omitted_model_uses_environment_default(monkeypatch):
+    monkeypatch.setenv("OLLAMA_MODEL", "environment-model")
+    adapter = ollama.OllamaAdapter()
+    assert adapter.configured
+    assert adapter.model == "environment-model"
+
+
 def test_configured_adapter_sends_chat_request_to_configured_endpoint(monkeypatch):
+    monkeypatch.delenv("OLLAMA_THINK", raising=False)
     seen = {}
 
     def fake_urlopen(request, timeout):
@@ -108,3 +119,69 @@ def test_configured_adapter_surfaces_model_not_found(monkeypatch):
     adapter = ollama.OllamaAdapter(model="nonexistent-model")
     with pytest.raises(RuntimeError, match="404"):
         adapter.generate("hello")
+
+
+def test_configured_adapter_rejects_empty_content(monkeypatch):
+    monkeypatch.setattr(
+        ollama, "urlopen",
+        lambda *_args, **_kwargs: FakeResponse({"message": {"content": ""}})
+    )
+    adapter = ollama.OllamaAdapter(model="qwen3:8b")
+    with pytest.raises(RuntimeError, match="empty"):
+        adapter.generate("hello")
+
+
+def test_configured_adapter_rejects_whitespace_content(monkeypatch):
+    monkeypatch.setattr(
+        ollama, "urlopen",
+        lambda *_args, **_kwargs: FakeResponse({"message": {"content": "   \n\t "}})
+    )
+    adapter = ollama.OllamaAdapter(model="qwen3:8b")
+    with pytest.raises(RuntimeError, match="empty"):
+        adapter.generate("hello")
+
+
+def test_configured_adapter_reports_generation_truncation(monkeypatch):
+    monkeypatch.setattr(
+        ollama, "urlopen",
+        lambda *_args, **_kwargs: FakeResponse({
+            "message": {"content": ""},
+            "done_reason": "length",
+        })
+    )
+    adapter = ollama.OllamaAdapter(model="qwen3:8b")
+    with pytest.raises(RuntimeError, match="truncated.*length"):
+        adapter.generate("hello")
+
+def test_think_setting_absent_preserves_default_request_payload(monkeypatch):
+    monkeypatch.delenv("OLLAMA_THINK", raising=False)
+    seen = {}
+
+    def fake_urlopen(request, timeout):
+        seen["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse({"message": {"content": "ok"}})
+
+    monkeypatch.setattr(ollama, "urlopen", fake_urlopen)
+    assert ollama.OllamaAdapter(model="qwen3:8b").generate("hello") == "ok"
+    assert "think" not in seen["body"]
+
+
+@pytest.mark.parametrize("value, expected", [("false", False), ("true", True)])
+def test_think_setting_is_sent_as_boolean(monkeypatch, value, expected):
+    monkeypatch.setenv("OLLAMA_THINK", value)
+    seen = {}
+
+    def fake_urlopen(request, timeout):
+        seen["body"] = json.loads(request.data.decode("utf-8"))
+        return FakeResponse({"message": {"content": "ok"}})
+
+    monkeypatch.setattr(ollama, "urlopen", fake_urlopen)
+    assert ollama.OllamaAdapter(model="qwen3:8b").generate("hello") == "ok"
+    assert seen["body"]["think"] is expected
+
+
+@pytest.mark.parametrize("value", ["", "yes", "no", "0", "1", "False", "TRUE", " false "])
+def test_think_setting_rejects_invalid_values(monkeypatch, value):
+    monkeypatch.setenv("OLLAMA_THINK", value)
+    with pytest.raises(ValueError, match="OLLAMA_THINK must be exactly"):
+        ollama.OllamaAdapter(model="qwen3:8b")

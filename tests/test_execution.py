@@ -5,7 +5,8 @@ from self_improving_agents.orchestrator import run_task, ModelNotConfiguredError
 from self_improving_agents.ollama import OllamaAdapter
 
 
-def test_unconfigured_model_is_not_misreported_as_completed(tmp_path):
+def test_unconfigured_model_is_not_misreported_as_completed(tmp_path, monkeypatch):
+    monkeypatch.delenv("OLLAMA_MODEL", raising=False)
     audit = tmp_path / "audit.jsonl"
     with pytest.raises(ModelNotConfiguredError, match="no model inference was performed"):
         run_task(Task("Explain the project"), "skills", audit, OllamaAdapter(model=None))

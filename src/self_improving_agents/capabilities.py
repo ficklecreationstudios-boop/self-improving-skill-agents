@@ -76,32 +76,51 @@ class CapabilityRegistry:
         query = args["query"]
         if not isinstance(query, str) or not query.strip() or len(query) > 256:
             raise CapabilityError("query must be 1–256 characters")
+
         allowed_suffixes = {".md", ".txt", ".py", ".json", ".yaml", ".yml", ".toml"}
+
+        # Bound traversal before sorting or inspecting file sizes.
+        # Every path entry counts toward the work bound.
+        paths = []
+        for path in self.workspace.rglob("*"):
+            paths.append(path)
+            if len(paths) > 2000:
+                raise CapabilityError("Workspace search path-entry limit exceeded")
+
         matches = []
-        scanned = 0
-        for path in sorted(self.workspace.rglob("*")):
-            if not path.is_file() or path.suffix.lower() not in allowed_suffixes:
+        for path in sorted(paths):
+            if path.suffix.lower() not in allowed_suffixes:
                 continue
+
             try:
                 resolved = path.resolve(strict=True)
                 resolved.relative_to(self.workspace)
-            except (OSError, ValueError):
+            except (OSError, RuntimeError, ValueError):
                 continue
-            if resolved.stat().st_size > self.max_file_bytes:
+
+            if not resolved.is_file():
                 continue
-            scanned += 1
-            if scanned > 2000:
-                raise CapabilityError("Workspace search file-count limit exceeded")
+            try:
+                if resolved.stat().st_size > self.max_file_bytes:
+                    continue
+            except OSError:
+                continue
+
             try:
                 lines = resolved.read_text(encoding="utf-8").splitlines()
             except (OSError, UnicodeError):
                 continue
+
             for number, line in enumerate(lines, 1):
                 if query.casefold() in line.casefold():
-                    matches.append({"path": resolved.relative_to(self.workspace).as_posix(),
-                                    "line": number, "text": line[:500]})
+                    matches.append({
+                        "path": resolved.relative_to(self.workspace).as_posix(),
+                        "line": number,
+                        "text": line[:500],
+                    })
                     if len(matches) >= 20:
                         return {"matches": matches, "truncated": True}
+
         return {"matches": matches, "truncated": False}
 
     def _calculator(self, args: dict) -> dict:

@@ -75,7 +75,8 @@ def test_output_evaluation_requires_nonempty_cases(tmp_path):
                          adapter=OllamaAdapter(model="fake"))
 
 
-def test_output_evaluation_requires_configured_model(tmp_path):
+def test_output_evaluation_requires_configured_model(tmp_path, monkeypatch):
+    monkeypatch.delenv("OLLAMA_MODEL", raising=False)
     with pytest.raises(RuntimeError, match="OLLAMA_MODEL"):
         evaluate_outputs(cases=[{"task":"task"}], skill_root="skills",
                          audit_path=tmp_path / "audit.jsonl", adapter=OllamaAdapter(model=None))

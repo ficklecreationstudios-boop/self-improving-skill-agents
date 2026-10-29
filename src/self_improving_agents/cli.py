@@ -4,7 +4,7 @@ from pathlib import Path
 from .models import Task, Proposal, Approval
 from .orchestrator import run_task, ModelNotConfiguredError
 from .agent_loop import run_agent_task
-from .capabilities import CapabilityRegistry
+from .container_capabilities import ContainerCapabilityRegistry
 from .skills import discover_skills, select_skills
 from .audit import AuditLedger
 from .agents.review import propose_skill_update
@@ -30,7 +30,7 @@ def main() -> None:
     ask = sub.add_parser("ask", help="Run a task using selected local skills")
     ask.add_argument("text"); ask.add_argument("--domain", default="general"); ask.add_argument("--skills", default="skills"); ask.add_argument("--audit", default="data/audit.jsonl")
     agent = sub.add_parser("agent", help="Run a bounded agent loop with allowlisted local capabilities")
-    agent.add_argument("text"); agent.add_argument("--workspace", default="."); agent.add_argument("--skills", default="skills")
+    agent.add_argument("text"); agent.add_argument("--workspace", required=True, help="Explicit directory mounted read-only into the agent container"); agent.add_argument("--skills", default="skills")
     agent.add_argument("--domain", default="general"); agent.add_argument("--audit", default="data/audit.jsonl")
     agent.add_argument("--max-steps", type=int, default=4)
     evaluate = sub.add_parser("evaluate-quality", help="Evaluate model outputs against preregistered thresholds")
@@ -77,7 +77,7 @@ def main() -> None:
     elif args.command == "agent":
         try:
             selected = select_skills(args.text, args.domain, discover_skills(args.skills))
-            result = run_agent_task(Task(args.text, args.domain), CapabilityRegistry(args.workspace),
+            result = run_agent_task(Task(args.text, args.domain), ContainerCapabilityRegistry(args.workspace),
                                     args.audit, OllamaAdapter(), max_steps=args.max_steps, skills=selected)
         except (RuntimeError, ValueError) as exc:
             raise SystemExit(str(exc)) from exc
@@ -86,6 +86,10 @@ def main() -> None:
                           "tool_call_count": len(result.tool_calls), "tool_names": [call["name"] for call in result.tool_calls],
                           "steps": result.steps, "stop_reason": result.stop_reason,
                           "task_digest": result.task_digest, "output_digest": result.output_digest}, indent=2))
+        if result.stop_reason != "final_answer":
+            raise SystemExit(
+                f"Agent stopped without a valid final answer: {result.stop_reason}"
+            )
     elif args.command == "evaluate-quality":
         try:
             report = evaluate_file(args.cases, args.skills, args.audit, OllamaAdapter(),
