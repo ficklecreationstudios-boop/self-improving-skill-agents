@@ -251,6 +251,42 @@ def test_container_rejects_non_allowlisted_tool_without_launching(tmp_path, monk
     assert not marker.exists()
 
 
+# --mount takes comma-separated options, so a comma in a source path could inject options.
+@pytest.mark.parametrize("source", ["workspace", "package", "worker"])
+@pytest.mark.parametrize("dirname", ["a,b", "ws,readonly=false"])
+def test_container_rejects_comma_in_mount_source_without_launching(tmp_path, monkeypatch,
+                                                                   source, dirname):
+    launches = []
+
+    def record_launch(command, **_kwargs):
+        launches.append(command)
+        raise OSError("container launch is not expected in this test")
+
+    monkeypatch.setattr(sandbox.subprocess, "Popen", record_launch)
+    monkeypatch.setattr(sandbox.subprocess, "run", record_launch)
+    comma_dir = tmp_path / dirname
+    comma_dir.mkdir()
+    if source == "workspace":
+        registry = sandbox.ContainerCapabilityRegistry(comma_dir)
+    else:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        registry = sandbox.ContainerCapabilityRegistry(workspace)
+        worker = registry.worker_path
+        registry.worker_path = (comma_dir / worker.name if source == "package"
+                                else worker.parent / f"{dirname}.py")
+    audit = tmp_path / "audit.jsonl"
+    adapter = ScriptedAdapter(_tool_call("calculator", {"expression": "1 + 1"}))
+
+    with pytest.raises(sandbox.CapabilitySandboxError, match="cannot contain commas"):
+        run_agent_task(Task("comma path fixture"), registry, audit, adapter, max_steps=1)
+
+    assert launches == []
+    events = [json.loads(line) for line in audit.read_text(encoding="utf-8").splitlines()]
+    assert [event["type"] for event in events] == ["agent_task_failed"]
+    assert events[0]["payload"]["error_type"] == "CapabilitySandboxError"
+
+
 # --- Container registry: real Docker for checks enforced inside the container ---------
 
 @pytest.fixture
@@ -290,6 +326,31 @@ def test_real_container_rejects_every_traversal_path_without_reading(real_contai
     result, adapter, events = _run_attack(registry, real_container_root, *calls)
 
     _assert_rejected_without_leak(result, adapter, events, len(calls))
+
+
+# Files that exist inside the container but outside /workspace, with readable suffixes.
+# The mount boundary cannot block these, so only the in-container containment check does.
+IN_CONTAINER_TARGETS = {
+    "../opt/container_worker.py": "Container-side capability worker",
+    "../opt/package/self_improving_agents/capabilities.py": "Least-privilege local capabilities",
+    "../usr/local/lib/python3.11/os.py": "OS routines for NT or Posix",
+}
+
+
+def test_real_container_rejects_traversal_to_files_inside_container(real_container_root):
+    workspace, _, _ = _layout(real_container_root)
+    calls = [("read_text_file", {"path": path}) for path in IN_CONTAINER_TARGETS]
+    registry = sandbox.ContainerCapabilityRegistry(workspace, timeout_seconds=20)
+
+    result, adapter, events = _run_attack(registry, real_container_root, *calls)
+
+    assert result.stop_reason == "final_answer"
+    assert [event["ok"] for event in events] == [False] * len(calls)
+    for call in result.tool_calls:
+        assert call["result"] == {"ok": False, "error": "Path escapes configured workspace"}, call
+    for marker in IN_CONTAINER_TARGETS.values():
+        assert marker not in result.output
+        assert all(marker not in prompt for prompt in adapter.prompts)
 
 
 def test_real_container_denies_reading_non_text_workspace_files(real_container_root):
