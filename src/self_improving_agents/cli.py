@@ -1,5 +1,5 @@
 """Command-line entry point."""
-import argparse, json, os, secrets, re, subprocess
+import argparse, json, os, secrets, subprocess
 from pathlib import Path
 from .models import Task, Proposal, Approval
 from .orchestrator import run_task, ModelNotConfiguredError
@@ -8,8 +8,10 @@ from .container_capabilities import ContainerCapabilityRegistry
 from .skills import discover_skills, select_skills, parse_skill_text
 from .audit import AuditLedger
 from .agents.review import propose_skill_update
-from .governance.approval import Governance
-from .approval_auth import sign_approval, validate_key, key_identifier, ApprovalSignatureError
+from .governance.approval import Governance, GovernanceError
+from .approval_auth import validate_key, key_identifier, ApprovalSignatureError
+from .owner_only import restrict_to_current_user
+from . import revocation
 from .learning import create_candidate_proposal, write_proposal, load_cases, LearningGateError
 from .quality_evaluation import evaluate_file
 from .ollama import OllamaAdapter
@@ -24,18 +26,15 @@ def read_approval_key(path: str) -> bytes:
         raise SystemExit(f"Cannot use approval key: {exc}") from exc
 
 
-def restrict_to_current_user(path: Path) -> None:
-    """Leave only the current user with access to path: mode 0600 on POSIX, a single owner ACE on Windows."""
-    if os.name != "nt":
-        path.chmod(0o600)
-        return
-    who = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, text=True,
-                         timeout=30, check=True).stdout.strip()
-    sid = who.rsplit(",", 1)[-1].strip().strip('"')
-    if not re.fullmatch(r"S-1-[0-9-]+", sid):
-        raise RuntimeError(f"could not determine the current user's SID from {who!r}")
-    subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"*{sid}:(F)"],
-                   capture_output=True, text=True, timeout=30, check=True)
+def ledger_revocations(path: str) -> list[tuple[str, str]]:
+    """(key_id, reason) for every key revocation in a verified audit ledger."""
+    if not Path(path).is_file():
+        raise SystemExit(f"Audit ledger {path} does not exist; no revocation registry was created")
+    ledger = AuditLedger(path)
+    if not ledger.verify():
+        raise SystemExit(f"Audit ledger {path} failed verification; no revocation registry was created")
+    return [(event["payload"].get("key_id"), event["payload"].get("reason") or "imported from audit ledger")
+            for event in ledger._events() if event.get("type") == "approval_key_revoked"]
 
 
 def main() -> None:
@@ -68,11 +67,16 @@ def main() -> None:
     learn.add_argument("--proposal-output", required=True); learn.add_argument("--max-chars", type=int, default=20000)
     init_key = sub.add_parser("init-approval-key", help="Create a random local shared-secret approval key")
     init_key.add_argument("key_file")
+    init_registry = sub.add_parser("init-revocation-registry",
+                                   help="Create the per-user approval-key revocation registry (once; never overwritten)")
+    init_registry.add_argument("--import-audit", action="append", default=[], metavar="AUDIT_FILE",
+                               help="Carry over key revocations from this verified audit ledger (repeatable)")
     approve = sub.add_parser("approve-proposal", help="Sign a proposal approval using the local shared secret")
     approve.add_argument("proposal_file"); approve.add_argument("--key-file", required=True)
     approve.add_argument("--approver", required=True); approve.add_argument("--reason", required=True)
     approve.add_argument("--approval-output", required=True); approve.add_argument("--approve", action="store_true", required=True)
     approve.add_argument("--audit", default="data/audit.jsonl")
+    approve.add_argument("--archive", default="data/skill-archive", help="Must match the archive path used by apply-proposal")
     revoke = sub.add_parser("revoke-approval-key", help="Revoke an approval key identifier in the audit ledger")
     revoke.add_argument("key_id", help="Full SHA-256 key identifier printed by init-approval-key")
     revoke.add_argument("--reason", required=True); revoke.add_argument("--audit", default="data/audit.jsonl")
@@ -170,30 +174,26 @@ def main() -> None:
         print(json.dumps({"status": "key_created", "path": str(destination),
                           "key_id": key_identifier(destination.read_bytes()),
                           "warning": "Protect this key outside the repository; anyone holding it can sign approvals. The key ID is a public fingerprint, not the key."}, indent=2))
+    elif args.command == "init-revocation-registry":
+        imported = [item for path in args.import_audit for item in ledger_revocations(path)]
+        try:
+            result = revocation.init_registry(imported)
+        except revocation.RevocationRegistryError as exc:
+            raise SystemExit(str(exc)) from exc
+        print(json.dumps({**result, "imported_from": args.import_audit}, indent=2))
     elif args.command == "approve-proposal":
         key = read_approval_key(args.key_file)
-        ledger = AuditLedger(args.audit)
-        if not ledger.verify():
-            raise SystemExit("Audit ledger is invalid; refusing to sign")
-        key_id = key_identifier(key)
-        if any(event.get("type") == "approval_key_revoked"
-               and event.get("payload", {}).get("key_id") == key_id
-               for event in ledger._events()):
-            raise SystemExit("Approval key is revoked; refusing to sign")
         item = Proposal(**json.loads(Path(args.proposal_file).read_text(encoding="utf-8")))
         if item.sealed().proposal_digest != item.proposal_digest:
             raise SystemExit("Proposal digest is invalid; refusing to sign")
+        governance = Governance(".", args.archive, AuditLedger(args.audit), approval_key=key)
         try:
-            approval = sign_approval(Approval(item.proposal_digest, args.approver, True, args.reason), key)
-        except ApprovalSignatureError as exc:
-            raise SystemExit(str(exc)) from exc
+            # Checks the ledger and the per-user registry for revocation, then records the signature.
+            approval = governance.issue_approval(item, args.approver, True, args.reason)
+        except GovernanceError as exc:
+            raise SystemExit(f"{exc}; nothing was signed") from exc
         destination = Path(args.approval_output); destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(json.dumps(approval.__dict__, indent=2), encoding="utf-8")
-        ledger.append("proposal_approval_signed", {
-            "proposal_digest": item.proposal_digest, "approver": approval.approver,
-            "key_id": approval.key_id, "approval_signature_digest": __import__("hashlib").sha256(approval.signature.encode("utf-8")).hexdigest(),
-            "reason": approval.reason,
-        })
         print(json.dumps({"status": "signed_approval_created", "approval_file": str(destination),
                           "proposal_digest": item.proposal_digest, "key_id": approval.key_id}, indent=2))
     elif args.command == "revoke-approval-key":

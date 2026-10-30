@@ -51,6 +51,11 @@ Create a random key file once and protect it outside version control. `init-appr
 ```powershell
 skill-agents init-approval-key "$HOME\skill-agents.approval-key"
 ```
+Create the per-user revocation registry once. It lives at a fixed place, `%LOCALAPPDATA%\self-improving-skill-agents\approval-key-revocations.json` on Windows (`~/.local/state/self-improving-skill-agents/` on POSIX). The location comes from the OS profile, and no option or environment variable changes it. Only the current user can open it. If you have revoked keys before, import every audit ledger that recorded them:
+```powershell
+skill-agents init-revocation-registry --import-audit data/audit.jsonl
+```
+Signing, applying and revoking all fail closed if the registry is missing, unreadable, corrupt or not owner-only. It is never created or reset automatically; `init-revocation-registry` refuses to overwrite an existing registry. Its digest catches accidental corruption, not deliberate edits by someone who can already write files as you.
 Then explicitly sign and apply a reviewed proposal:
 ```powershell
 skill-agents approve-proposal data/proposals/software_engineering.json --key-file "$HOME\skill-agents.approval-key" --approver "reviewer-id" --reason "reviewed candidate and test evidence" --approve --approval-output data/approvals/software_engineering.json
@@ -58,7 +63,7 @@ skill-agents apply-proposal data/proposals/software_engineering.json data/approv
 skill-agents verify-audit
 skill-agents recover
 ```
-Anyone with the key can sign approvals; the approver label is not independently verified identity. Key IDs are printed by `init-approval-key`. Revoke a key by appending its full SHA-256 key ID to the verified audit ledger: `skill-agents revoke-approval-key <key-id> --reason "key rotation" --audit data/audit.jsonl`. Approval signing and application fail closed for a revoked key. Keep the replacement key outside the repository and use OS account permissions or a dedicated signing service for stronger identity controls.
+Anyone with the key can sign approvals; the approver label is not independently verified identity. Key IDs are printed by `init-approval-key`. Revoke a key with `skill-agents revoke-approval-key <key-id> --reason "key rotation" --audit data/audit.jsonl`. This records the key ID in the per-user registry first, then in the audit ledger. Signing and applying check both, so a revoked key stays revoked whichever ledger file is used. `apply-proposal` also requires a matching approval-signed record in the ledger it is given, so sign and apply with the same `--audit` file. Keep the replacement key outside the repository and use OS account permissions or a dedicated signing service for stronger identity controls.
 
 ## Feedback-driven proposal workflow
 With a local Ollama model configured, use a frozen JSONL regression case file:

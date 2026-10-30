@@ -9,7 +9,9 @@ Implemented:
 - Bounded tool loop (at most eight calls), calculator AST allowlist, read-only workspace tools, file size limits and path containment.
 - Structural candidate checks and required deterministic regression-case checks before proposal creation.
 - Exact proposal digest and base digest checks.
-- Versioned HMAC-signed approval artifacts bind the exact proposal and a SHA-256 key identifier; revoked key IDs recorded in the verified audit ledger are rejected for signing and application.
+- Versioned HMAC-signed approval artifacts bind the exact proposal and a SHA-256 key identifier.
+- Revoked key IDs are rejected for signing and application. Each revocation is recorded both in the verified audit ledger and in a per-user, owner-only revocation registry at a fixed profile location. The registry fails closed if it is missing, corrupt or over-permissive, so switching to another ledger file does not restore a revoked key.
+- Applying a proposal requires the matching approval-signed record (proposal, key ID and signature digest) in the same audit ledger.
 - Prior-version archive and transaction journals; interrupted transactions can be reconciled or rolled back.
 - Hash-chained audit, cross-process writer lock, and fsync on append.
 - No-model inference is recorded as not executed, rather than passed off as a model answer.

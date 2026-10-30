@@ -58,7 +58,7 @@ def test_cli_signed_approval_lifecycle(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", [
         "skill-agents", "approve-proposal", str(proposal_path), "--key-file", str(key_path),
         "--approver", "test-reviewer", "--reason", "reviewed", "--approve",
-        "--approval-output", str(approval_path),
+        "--approval-output", str(approval_path), "--audit", str(tmp_path / "audit.jsonl"),
     ])
     main()
     assert json.loads(approval_path.read_text(encoding="utf-8"))["signature"]

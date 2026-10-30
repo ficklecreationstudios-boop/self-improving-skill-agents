@@ -10,6 +10,7 @@ from ..models import Proposal, Approval, digest_text
 from ..audit import AuditLedger
 from ..skills import discover_skills, parse_skill_text
 from ..approval_auth import sign_approval, verify_approval, key_identifier, ApprovalSignatureError
+from .. import revocation
 
 class GovernanceError(RuntimeError):
     pass
@@ -59,9 +60,23 @@ class Governance:
             }
         except Exception as exc:
             raise GovernanceError("Cannot read approval-key revocation state; failing closed") from exc
+        # The per-user registry holds revocations made with any ledger, so switching ledgers cannot unrevoke a key.
+        try:
+            revoked |= revocation.revoked_key_ids()
+        except revocation.RevocationRegistryError as exc:
+            raise GovernanceError(str(exc)) from exc
         if key_id in revoked:
             raise GovernanceError("Approval key is revoked; refusing to sign or apply proposals")
         return key_id
+
+    def check_key_active(self) -> str:
+        """Fail early, before any review, if the configured key cannot sign."""
+        if self.approval_key is None:
+            raise GovernanceError("Approval signing key is not configured")
+        try:
+            return self._assert_key_active(self.approval_key)
+        except ApprovalSignatureError as exc:
+            raise GovernanceError(str(exc)) from exc
 
     def issue_approval(self, proposal: Proposal, approver: str, approved: bool, reason: str = "") -> Approval:
         if not isinstance(approver, str) or not approver.strip():
@@ -70,12 +85,20 @@ class Governance:
             return Approval(proposal.proposal_digest, approver.strip(), False, reason)
         if self.approval_key is None:
             raise GovernanceError("Approval signing key is not configured")
-        try:
-            self._assert_key_active(self.approval_key)
-            return sign_approval(Approval(proposal.proposal_digest, approver.strip(), True, reason),
-                                 self.approval_key)
-        except ApprovalSignatureError as exc:
-            raise GovernanceError(str(exc)) from exc
+        with self._update_lock():
+            try:
+                self._assert_key_active(self.approval_key)
+                approval = sign_approval(Approval(proposal.proposal_digest, approver.strip(), True, reason),
+                                         self.approval_key)
+            except ApprovalSignatureError as exc:
+                raise GovernanceError(str(exc)) from exc
+            # apply() accepts only approvals recorded here, in the same ledger it is given.
+            self.audit.append("proposal_approval_signed", {
+                "proposal_digest": proposal.proposal_digest, "approver": approval.approver,
+                "key_id": approval.key_id, "approval_signature_digest": digest_text(approval.signature),
+                "reason": approval.reason,
+            })
+            return approval
 
     def revoke_approval_key(self, key_id: str, reason: str) -> dict:
         """Record key revocation under the same governance lock used by apply()."""
@@ -86,15 +109,22 @@ class Governance:
         with self._update_lock():
             if not self.audit.verify():
                 raise GovernanceError("Audit ledger is invalid; refusing to revoke key")
+            # The registry is written first: it is what every ledger is checked against.
+            try:
+                added = revocation.add_revocation(key_id, reason.strip())
+            except revocation.RevocationRegistryError as exc:
+                raise GovernanceError(str(exc)) from exc
             events = self.audit._events()
-            if any(event.get("type") == "approval_key_revoked"
-                   and event.get("payload", {}).get("key_id") == key_id for event in events):
+            in_ledger = any(event.get("type") == "approval_key_revoked"
+                            and event.get("payload", {}).get("key_id") == key_id for event in events)
+            if in_ledger and not added:
                 return {"status": "already_revoked", "key_id": key_id}
-            event = self.audit.append("approval_key_revoked", {
+            event = None if in_ledger else self.audit.append("approval_key_revoked", {
                 "key_id": key_id, "reason": reason.strip(),
             })
             return {"status": "key_revoked", "key_id": key_id,
-                    "audit_seq": event["seq"], "audit_valid": self.audit.verify()}
+                    "audit_seq": event["seq"] if event else None, "audit_valid": self.audit.verify(),
+                    "registry": str(revocation.registry_path())}
 
     def _find_target(self, skill_id: str) -> Path:
         if not re.fullmatch(r"[a-zA-Z0-9_-]+", skill_id):
@@ -229,6 +259,14 @@ class Governance:
         self._recover_pending_unlocked()
         if not self.audit.verify():
             raise GovernanceError("Audit ledger failed integrity verification; refusing skill update")
+        signature_digest = digest_text(approval.signature)
+        if not any(event.get("type") == "proposal_approval_signed"
+                   and event.get("payload", {}).get("proposal_digest") == proposal.proposal_digest
+                   and event.get("payload", {}).get("key_id") == approval.key_id
+                   and event.get("payload", {}).get("approval_signature_digest") == signature_digest
+                   for event in self.audit._events()):
+            raise GovernanceError("This audit ledger has no matching approval-signed record; "
+                                  "sign the proposal with this ledger before applying it")
         target = self._find_target(proposal.skill_id)
         current = target.read_text(encoding="utf-8")
         if digest_text(current) != proposal.base_digest:
