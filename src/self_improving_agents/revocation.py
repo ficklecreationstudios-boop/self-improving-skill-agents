@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 
+from .file_lock import exclusive_lock
 from .owner_only import owner_only_problem, restrict_to_current_user
 
 APP_DIRECTORY = "self-improving-skill-agents"
@@ -80,23 +81,8 @@ def _missing(path: Path) -> RevocationRegistryError:
 @contextmanager
 def _locked(directory: Path):
     """Serialize registry reads and writes across processes on Windows and POSIX."""
-    with (directory / (REGISTRY_NAME + ".lock")).open("a+b") as lock_file:
-        if os.name == "nt":
-            import msvcrt
-            lock_file.seek(0)
-            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
-            try:
-                yield
-            finally:
-                lock_file.seek(0)
-                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    with exclusive_lock(directory / (REGISTRY_NAME + ".lock")):
+        yield
 
 
 def _digest(revocations: list[dict]) -> str:

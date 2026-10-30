@@ -13,7 +13,7 @@ Implemented:
 - Revoked key IDs are rejected for signing and application. Each revocation is recorded both in the verified audit ledger and in a per-user, owner-only revocation registry at a fixed profile location. The registry fails closed if it is missing, corrupt or over-permissive, so switching to another ledger file does not restore a revoked key.
 - Applying a proposal requires the matching approval-signed record (proposal, key ID and signature digest) in the same audit ledger.
 - Prior-version archive and transaction journals; interrupted transactions can be reconciled or rolled back.
-- Hash-chained audit, cross-process writer lock, and fsync on append.
+- Hash-chained audit, cross-process writer lock, and fsync on append. On Windows the audit, governance and revocation-registry locks use LockFileEx, so a waiting writer is woken as soon as the holder releases. A lock not granted within 10 s fails closed with an error, and nothing is written.
 - No-model inference is recorded as not executed, rather than passed off as a model answer.
 - Network access occurs only when an Ollama model is explicitly configured.
 

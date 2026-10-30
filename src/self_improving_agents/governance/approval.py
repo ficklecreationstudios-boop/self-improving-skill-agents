@@ -11,6 +11,7 @@ from ..audit import AuditLedger
 from ..skills import discover_skills, parse_skill_text
 from ..approval_auth import sign_approval, verify_approval, key_identifier, ApprovalSignatureError
 from .. import revocation
+from ..file_lock import exclusive_lock
 
 class GovernanceError(RuntimeError):
     pass
@@ -28,25 +29,8 @@ class Governance:
     @contextmanager
     def _update_lock(self):
         self.archive_root.mkdir(parents=True, exist_ok=True)
-        with self.lock_path.open("a+b") as lock_file:
-            if os.name == "nt":
-                import msvcrt
-                # Lock byte 0 without writing it first: Windows allows locking past EOF, and
-                # an unlocked initialisation write can collide with another holder's lock.
-                lock_file.seek(0)
-                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
-                try:
-                    yield
-                finally:
-                    lock_file.seek(0)
-                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-                try:
-                    yield
-                finally:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        with exclusive_lock(self.lock_path):
+            yield
 
     def _assert_key_active(self, key: bytes) -> str:
         if not self.audit.verify():

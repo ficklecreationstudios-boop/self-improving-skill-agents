@@ -6,6 +6,7 @@ from pathlib import Path
 from hashlib import sha256
 from datetime import datetime, timezone
 from contextlib import contextmanager
+from .file_lock import exclusive_lock
 
 
 class AuditIntegrityError(RuntimeError):
@@ -22,25 +23,8 @@ class AuditLedger:
     def _exclusive_lock(self):
         """Serialize ledger reads/writes across processes on Windows and POSIX."""
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.lock_path.open("a+b") as lock_file:
-            if os.name == "nt":
-                import msvcrt
-                # Lock byte 0 without writing it first: Windows allows locking past EOF, and
-                # an unlocked initialisation write can collide with another holder's lock.
-                lock_file.seek(0)
-                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
-                try:
-                    yield
-                finally:
-                    lock_file.seek(0)
-                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-                try:
-                    yield
-                finally:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        with exclusive_lock(self.lock_path):
+            yield
 
     def _events(self) -> list[dict]:
         if not self.path.exists():
