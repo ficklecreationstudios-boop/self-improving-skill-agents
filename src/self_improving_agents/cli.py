@@ -1,5 +1,5 @@
 """Command-line entry point."""
-import argparse, json, os, secrets, subprocess
+import argparse, difflib, json, os, secrets, subprocess, unicodedata
 from pathlib import Path
 from .models import Task, Proposal, Approval
 from .orchestrator import run_task, ModelNotConfiguredError
@@ -35,6 +35,27 @@ def ledger_revocations(path: str) -> list[tuple[str, str]]:
         raise SystemExit(f"Audit ledger {path} failed verification; no revocation registry was created")
     return [(event["payload"].get("key_id"), event["payload"].get("reason") or "imported from audit ledger")
             for event in ledger._events() if event.get("type") == "approval_key_revoked"]
+
+
+def printable(text: str) -> str:
+    """Show control and invisible formatting characters (terminal escapes, bidi overrides) as visible escapes."""
+    return "".join(char if char in "\n\t" or unicodedata.category(char) not in {"Cc", "Cf", "Zl", "Zp"}
+                   else f"\\u{ord(char):04x}" for char in text)
+
+
+def show_for_review(proposal: Proposal, target: Path, current: str) -> None:
+    """Print the current skill, its proposed replacement and a line diff, so the signer sees what changes."""
+    rule = "=" * 72
+    diff = list(difflib.unified_diff(current.split("\n"), proposal.proposed_content.split("\n"),
+                                     "current", "proposed", lineterm=""))
+    print("\n".join([
+        rule, f"Proposal {proposal.proposal_digest}", f"Skill: {proposal.skill_id} ({target})",
+        f"Rationale: {printable(proposal.rationale)}",
+        rule, "CURRENT SKILL", rule, printable(current),
+        rule, "PROPOSED REPLACEMENT", rule, printable(proposal.proposed_content),
+        rule, "CHANGES (current -> proposed)", rule, *([printable(line) for line in diff] or ["(no changes)"]),
+        rule,
+    ]))
 
 
 def main() -> None:
@@ -77,6 +98,7 @@ def main() -> None:
     approve.add_argument("--approval-output", required=True); approve.add_argument("--approve", action="store_true", required=True)
     approve.add_argument("--audit", default="data/audit.jsonl")
     approve.add_argument("--archive", default="data/skill-archive", help="Must match the archive path used by apply-proposal")
+    approve.add_argument("--skills", default="skills", help="Skill root holding the skill to review; must match apply-proposal")
     revoke = sub.add_parser("revoke-approval-key", help="Revoke an approval key identifier in the audit ledger")
     revoke.add_argument("key_id", help="Full SHA-256 key identifier printed by init-approval-key")
     revoke.add_argument("--reason", required=True); revoke.add_argument("--audit", default="data/audit.jsonl")
@@ -186,8 +208,22 @@ def main() -> None:
         item = Proposal(**json.loads(Path(args.proposal_file).read_text(encoding="utf-8")))
         if item.sealed().proposal_digest != item.proposal_digest:
             raise SystemExit("Proposal digest is invalid; refusing to sign")
-        governance = Governance(".", args.archive, AuditLedger(args.audit), approval_key=key)
+        governance = Governance(args.skills, args.archive, AuditLedger(args.audit), approval_key=key)
         try:
+            governance.check_key_active()
+            target, current = governance.current_skill_for(item)
+        except GovernanceError as exc:
+            raise SystemExit(f"{exc}; nothing was signed") from exc
+        show_for_review(item, target, current)
+        try:
+            typed = input(f"Type the skill id '{item.skill_id}' to sign this approval; anything else cancels: ")
+        except EOFError:
+            typed = None
+        if typed != item.skill_id:
+            raise SystemExit("Confirmation did not match the skill id; nothing was signed")
+        try:
+            if governance.current_skill_for(item)[1] != current:
+                raise GovernanceError("Stale proposal: the skill changed while it was being reviewed")
             # Checks the ledger and the per-user registry for revocation, then records the signature.
             approval = governance.issue_approval(item, args.approver, True, args.reason)
         except GovernanceError as exc:

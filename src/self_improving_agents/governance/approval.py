@@ -144,6 +144,17 @@ class Governance:
             raise GovernanceError(f"Expected exactly one skill target for {skill_id!r}; found {len(unique)}")
         return unique[0]
 
+    def current_skill_for(self, proposal: Proposal) -> tuple[Path, str]:
+        """The skill file a proposal targets and its current text; refuses a stale proposal."""
+        target = self._find_target(proposal.skill_id)
+        try:
+            current = target.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise GovernanceError(f"Cannot read the current skill {target}: {exc}") from exc
+        if digest_text(current) != proposal.base_digest:
+            raise GovernanceError("Stale proposal: base skill content has changed")
+        return target, current
+
     @staticmethod
     def _fsync_directory(path: Path) -> None:
         if os.name == "nt":
