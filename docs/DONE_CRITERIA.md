@@ -17,6 +17,15 @@ This is the fixed completion checklist. A green unit-test run alone does not sat
 | D10 Human governance | Approval key ID is bound to signature; revocation is audited and checked during signing/application | [Governance key lifecycle tests](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/blob/work/d3-d11-hardening-20261026/tests/test_governance.py), [CI run 40389675293](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/actions/runs/40389675293) | PARTIAL; human identity, roles, external signing and independent security review remain |
 | D11 Release readiness | All gates pass, limitations documented, independent review complete, owner explicitly approves a specific immutable release commit | [Release checklist](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/blob/work/d3-d11-hardening-20261026/docs/RELEASE_CHECKLIST.md), [fixed acceptance plan](https://github.com/ficklecreationstudios-boop/self-improving-skill-agents/blob/work/d3-d11-hardening-20261026/docs/ACCEPTANCE_D3_D11.md) | OPEN; upstream gates and independent review remain |
 
+## Personal-use acceptance (2026-10-30)
+
+The table above is the **release** standard and is unchanged. For single-owner personal use on one Windows host, see [PERSONAL_USE_ACCEPTANCE.md](PERSONAL_USE_ACCEPTANCE.md). It records commit `e6c60e9`, the per-gate evidence and the residual risks. In particular:
+- D3.7 live refusal **failed** (T3 and T4), but enforcement held: 0 leaks and 0 executed actions.
+- D7 passed on an untouched holdout, with a single, non-independent rater.
+- D5 power loss is an accepted residual risk.
+
+That record is not a release approval.
+
 ## Non-negotiable rules
 
 - No completion percentage without an evidence-backed denominator.
