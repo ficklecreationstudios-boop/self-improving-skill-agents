@@ -26,6 +26,27 @@ def read_approval_key(path: str) -> bytes:
         raise SystemExit(f"Cannot use approval key: {exc}") from exc
 
 
+PROPOSAL_FIELDS = {"skill_id": str, "base_digest": str, "proposed_content": str, "rationale": str,
+                   "proposal_digest": str}
+APPROVAL_FIELDS = {"proposal_digest": str, "approver": str, "approved": bool, "reason": str,
+                   "signature": str, "key_id": str}
+
+
+def load_record(path: str, label: str, fields: dict[str, type]) -> dict:
+    """Read a proposal or approval JSON file, refusing anything that is not exactly the expected record."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise SystemExit(f"Cannot read {label} file {path}: {exc}") from exc
+    if not isinstance(data, dict) or set(data) != set(fields):
+        raise SystemExit(f"{label.capitalize()} file {path} must be a JSON object with exactly the fields "
+                         f"{', '.join(sorted(fields))}")
+    wrong = sorted(name for name, kind in fields.items() if type(data[name]) is not kind)
+    if wrong:
+        raise SystemExit(f"{label.capitalize()} file {path} has fields of the wrong type: {', '.join(wrong)}")
+    return data
+
+
 def ledger_revocations(path: str) -> list[tuple[str, str]]:
     """(key_id, reason) for every key revocation in a verified audit ledger."""
     if not Path(path).is_file():
@@ -241,10 +262,14 @@ def main() -> None:
         print(json.dumps(result, indent=2))
     elif args.command == "apply-proposal":
         key = read_approval_key(args.key_file)
-        item = Proposal(**json.loads(Path(args.proposal_file).read_text(encoding="utf-8")))
-        approval = Approval(**json.loads(Path(args.approval_file).read_text(encoding="utf-8")))
+        item = Proposal(**load_record(args.proposal_file, "proposal", PROPOSAL_FIELDS))
+        approval = Approval(**load_record(args.approval_file, "approval", APPROVAL_FIELDS))
         ledger = AuditLedger(args.audit)
-        target = Governance(args.skills, args.archive, ledger, approval_key=key).apply(item, approval)
+        try:
+            target = Governance(args.skills, args.archive, ledger, approval_key=key).apply(item, approval)
+        except GovernanceError as exc:
+            # Expected refusals only; any other exception keeps its traceback so real bugs stay visible.
+            raise SystemExit(f"apply-proposal failed: {exc}") from exc
         print(json.dumps({"status": "applied", "skill_id": item.skill_id, "path": str(target),
                           "proposal_digest": item.proposal_digest, "audit_valid": ledger.verify()}, indent=2))
 

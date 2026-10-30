@@ -69,7 +69,7 @@ def test_revoking_in_one_ledger_blocks_signing_and_applying_with_any_other_ledge
     run_cli(monkeypatch, "revoke-approval-key", key_id, "--reason", "compromised", "--audit", "A.jsonl")
 
     for ledger in ("A.jsonl", "B.jsonl"):
-        with pytest.raises(GovernanceError, match="revoked"):
+        with pytest.raises(SystemExit, match="revoked"):
             run_cli(monkeypatch, "apply-proposal", "p.json", "a.json", "--key-file", str(key),
                     "--audit", ledger)
         with pytest.raises(SystemExit, match="revoked"):
