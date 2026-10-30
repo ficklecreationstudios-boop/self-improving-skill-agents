@@ -185,3 +185,28 @@ def test_think_setting_rejects_invalid_values(monkeypatch, value):
     monkeypatch.setenv("OLLAMA_THINK", value)
     with pytest.raises(ValueError, match="OLLAMA_THINK must be exactly"):
         ollama.OllamaAdapter(model="qwen3:8b")
+
+
+@pytest.mark.parametrize("env, explicit, expected", [
+    (None, None, 60.0), ("180", None, 180.0), ("2.5", None, 2.5), ("180", 7, 7)])
+def test_timeout_comes_from_argument_then_environment_then_default(monkeypatch, env, explicit, expected):
+    if env is None:
+        monkeypatch.delenv("OLLAMA_TIMEOUT", raising=False)
+    else:
+        monkeypatch.setenv("OLLAMA_TIMEOUT", env)
+    seen = {}
+
+    def fake_urlopen(request, timeout):
+        seen["timeout"] = timeout
+        return FakeResponse({"message": {"content": "ok"}})
+
+    monkeypatch.setattr(ollama, "urlopen", fake_urlopen)
+    assert ollama.OllamaAdapter(model="qwen3:8b", timeout=explicit).generate("hello") == "ok"
+    assert seen["timeout"] == expected
+
+
+@pytest.mark.parametrize("value", ["", "0", "-5", "abc", "nan", "inf", "3601"])
+def test_timeout_setting_rejects_invalid_values(monkeypatch, value):
+    monkeypatch.setenv("OLLAMA_TIMEOUT", value)
+    with pytest.raises(ValueError, match="OLLAMA_TIMEOUT must be"):
+        ollama.OllamaAdapter(model="qwen3:8b")

@@ -8,14 +8,31 @@ from urllib.error import URLError, HTTPError
 MAX_PROMPT_CHARS = 200_000
 MAX_RESPONSE_BYTES = 2_000_000
 MAX_OUTPUT_CHARS = 500_000
+DEFAULT_TIMEOUT_SECONDS = 60.0
+MAX_TIMEOUT_SECONDS = 3600.0
 
 
 _MODEL_UNSET = object()
 
 
+def _timeout_from_environment() -> float:
+    raw = os.getenv("OLLAMA_TIMEOUT")
+    if raw is None:
+        return DEFAULT_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        value = float("nan")
+    if not 0 < value <= MAX_TIMEOUT_SECONDS:  # also rejects nan and inf
+        raise ValueError(f"OLLAMA_TIMEOUT must be a number of seconds in (0, {MAX_TIMEOUT_SECONDS:g}]")
+    return value
+
+
 class OllamaAdapter:
     def __init__(self, model: str | None | object = _MODEL_UNSET,
-                 base_url: str | None = None, timeout: float = 60):
+                 base_url: str | None = None, timeout: float | None = None):
+        if timeout is None:
+            timeout = _timeout_from_environment()
         if model is _MODEL_UNSET:
             self.model = os.getenv("OLLAMA_MODEL")
         elif model is None or isinstance(model, str):

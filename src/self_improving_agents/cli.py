@@ -1,5 +1,5 @@
 """Command-line entry point."""
-import argparse, json, os, secrets, re
+import argparse, json, os, secrets, re, subprocess
 from pathlib import Path
 from .models import Task, Proposal, Approval
 from .orchestrator import run_task, ModelNotConfiguredError
@@ -22,6 +22,20 @@ def read_approval_key(path: str) -> bytes:
         return key
     except (OSError, ApprovalSignatureError) as exc:
         raise SystemExit(f"Cannot use approval key: {exc}") from exc
+
+
+def restrict_to_current_user(path: Path) -> None:
+    """Leave only the current user with access to path: mode 0600 on POSIX, a single owner ACE on Windows."""
+    if os.name != "nt":
+        path.chmod(0o600)
+        return
+    who = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, text=True,
+                         timeout=30, check=True).stdout.strip()
+    sid = who.rsplit(",", 1)[-1].strip().strip('"')
+    if not re.fullmatch(r"S-1-[0-9-]+", sid):
+        raise RuntimeError(f"could not determine the current user's SID from {who!r}")
+    subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"*{sid}:(F)"],
+                   capture_output=True, text=True, timeout=30, check=True)
 
 
 def main() -> None:
@@ -140,11 +154,16 @@ def main() -> None:
     elif args.command == "init-approval-key":
         destination = Path(args.key_file); destination.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with destination.open("xb") as stream:
-                stream.write(secrets.token_bytes(32)); stream.flush(); os.fsync(stream.fileno())
-            if os.name != "nt": destination.chmod(0o600)
+            destination.open("xb").close()  # restrict the empty file before any key bytes exist
         except FileExistsError:
             raise SystemExit("Refusing to overwrite an existing approval key")
+        try:
+            restrict_to_current_user(destination)
+            with destination.open("r+b") as stream:
+                stream.write(secrets.token_bytes(32)); stream.flush(); os.fsync(stream.fileno())
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            destination.unlink(missing_ok=True)
+            raise SystemExit(f"Could not restrict the approval key to the current user; no key was created: {exc}")
         print(json.dumps({"status": "key_created", "path": str(destination),
                           "key_id": key_identifier(destination.read_bytes()),
                           "warning": "Protect this key outside the repository; anyone holding it can sign approvals. The key ID is a public fingerprint, not the key."}, indent=2))

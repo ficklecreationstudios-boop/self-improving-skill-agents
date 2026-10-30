@@ -47,7 +47,7 @@ skill-agents evaluate-quality --cases eval/my_frozen_cases.jsonl --thresholds ev
 The dataset and threshold-file hashes are written to the audit ledger before inference. The scorer reports execution, phrase, routing-label, and abstention-marker metrics. These are diagnostics, not semantic correctness or safety proof. Keep a separate untouched holdout for final evaluation.
 
 ## Approval-key workflow
-Create a random key file once and protect it outside version control:
+Create a random key file once and protect it outside version control. `init-approval-key` restricts the new file to the current user: mode 0600 on POSIX, and on Windows a single full-control entry for the current user's SID, with inheritance removed. If that restriction fails, no key is created.
 ```powershell
 skill-agents init-approval-key "$HOME\skill-agents.approval-key"
 ```
@@ -66,6 +66,12 @@ With a local Ollama model configured, use a frozen JSONL regression case file:
 skill-agents learn-from-feedback --skill-id software_engineering --task-id task-001 --task "Debug a failing test" --output-text "The previous response missed the root cause" --rating 2 --feedback "Check the actual failure and include a regression test" --holdout eval/my_frozen_cases.jsonl --proposal-output data/proposals/software_engineering.json
 ```
 Every case is run against the candidate; any failed substring assertion blocks proposal creation. Freeze cases before tuning and keep a separate independent holdout.
+
+## Model settings
+- `OLLAMA_MODEL`: the local model tag. If it isn't set, tasks are audited as not executed.
+- `OLLAMA_BASE_URL`: default `http://127.0.0.1:11434`.
+- `OLLAMA_THINK`: exactly `true` or `false` when set.
+- `OLLAMA_TIMEOUT`: seconds per model request, from 0 (exclusive) to 3600; default `60`. Raise it when long answers time out on slower hardware. For example, `qwen3:8b` split between the CPU and a 6 GB GPU needed more than 60 s for some long answers.
 
 ## Verify Ollama on Windows
 The GitHub runner cannot access Ollama on your PC. Activate the project venv, set `OLLAMA_MODEL` to an installed local tag, and run `./scripts/verify-local-ollama.ps1`. See `docs/LOCAL_OLLAMA_VERIFICATION.md`. The script does not download a model or change active skills.
