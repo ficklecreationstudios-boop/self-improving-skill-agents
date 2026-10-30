@@ -169,3 +169,11 @@ def test_candidate_regression_model_failure_is_audited_and_never_proposes(tmp_pa
     assert "skill_candidate_rejected" in types
     assert "skill_proposal_created" not in types
     assert ledger.verify()
+
+
+def test_candidate_screen_rejects_frontmatter_that_discovery_cannot_load():
+    current = "---\nid: demo\n---\nDo the task."
+    result = evaluate_candidate(skill_id="demo", current_content=current,
+                                candidate_content="---\nid: demo\npermissions: all\n---\nDo the task carefully.")
+    assert not result.passed
+    assert not result.checks["valid_frontmatter"]

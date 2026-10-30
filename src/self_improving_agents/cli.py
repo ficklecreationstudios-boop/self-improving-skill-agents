@@ -5,7 +5,7 @@ from .models import Task, Proposal, Approval
 from .orchestrator import run_task, ModelNotConfiguredError
 from .agent_loop import run_agent_task
 from .container_capabilities import ContainerCapabilityRegistry
-from .skills import discover_skills, select_skills
+from .skills import discover_skills, select_skills, parse_skill_text
 from .audit import AuditLedger
 from .agents.review import propose_skill_update
 from .governance.approval import Governance
@@ -131,6 +131,9 @@ def main() -> None:
         if len(matches) != 1: raise SystemExit(f"Expected exactly one skill with id {args.skill_id!r}; found {len(matches)}")
         current = Path(matches[0].path).read_text(encoding="utf-8")
         proposed = Path(args.proposed_content_file).read_text(encoding="utf-8")
+        parsed = parse_skill_text(proposed, Path(matches[0].path).parent.name)
+        if parsed is None or parsed.skill_id != args.skill_id:
+            raise SystemExit(f"Proposed content is not a valid SKILL.md for skill id {args.skill_id!r}; no proposal was created")
         item = propose_skill_update(args.skill_id, current, proposed, args.rationale)
         destination = Path(args.output or f"data/proposals/{args.skill_id}.json")
         destination.parent.mkdir(parents=True, exist_ok=True)

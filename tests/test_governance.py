@@ -126,3 +126,28 @@ def test_key_revocation_rejects_invalid_identifier_and_empty_reason(tmp_path):
         gov.revoke_approval_key("not-a-key-id", "reason")
     with pytest.raises(GovernanceError, match="reason"):
         gov.revoke_approval_key("a" * 64, "  ")
+
+
+@pytest.mark.parametrize("content, reason", [
+    ("new", "no frontmatter"),
+    ("---\nid: other\n---\nnew", "changes the skill id"),
+    ("---\nid: demo\nowner: x\n---\nnew", "unknown metadata key"),
+])
+def test_approved_update_that_would_make_the_skill_unloadable_is_rejected(tmp_path, content, reason):
+    target, ledger, gov = setup_governance(tmp_path)
+    original = target.read_text(encoding="utf-8")
+    proposal = propose_skill_update("demo", original, content, reason)
+    approval = gov.issue_approval(proposal, "reviewer", True, "signed, but content is invalid")
+    with pytest.raises(GovernanceError, match="not a valid SKILL.md"):
+        gov.apply(proposal, approval)
+    assert target.read_text(encoding="utf-8") == original
+    assert list((tmp_path / "archive").glob("*.SKILL.md")) == []
+    assert ledger.verify()
+
+
+def test_approved_update_with_a_utf8_bom_stays_discoverable(tmp_path):
+    from self_improving_agents.skills import discover_skills
+    target, _, gov = setup_governance(tmp_path)
+    proposal = propose_skill_update("demo", target.read_text(), "﻿---\nid: demo\n---\nnew", "bom")
+    gov.apply(proposal, gov.issue_approval(proposal, "reviewer", True, "reviewed"))
+    assert [s.skill_id for s in discover_skills(tmp_path / "skills")] == ["demo"]

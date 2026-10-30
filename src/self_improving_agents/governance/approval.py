@@ -8,7 +8,7 @@ import re
 import tempfile
 from ..models import Proposal, Approval, digest_text
 from ..audit import AuditLedger
-from ..skills import discover_skills
+from ..skills import discover_skills, parse_skill_text
 from ..approval_auth import sign_approval, verify_approval, key_identifier, ApprovalSignatureError
 
 class GovernanceError(RuntimeError):
@@ -233,6 +233,10 @@ class Governance:
         current = target.read_text(encoding="utf-8")
         if digest_text(current) != proposal.base_digest:
             raise GovernanceError("Stale proposal: base skill content has changed")
+        # Discovery would silently drop an unparsable skill, so an approved update must not produce one.
+        parsed = parse_skill_text(proposal.proposed_content, target.parent.name)
+        if parsed is None or parsed.skill_id != proposal.skill_id:
+            raise GovernanceError(f"Proposed content is not a valid SKILL.md for skill id {proposal.skill_id!r}")
 
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         archive = self.archive_root / f"{proposal.skill_id}.{stamp}.SKILL.md"

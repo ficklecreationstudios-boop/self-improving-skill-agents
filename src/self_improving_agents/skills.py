@@ -24,7 +24,12 @@ def _parse_skill(path: Path, root: Path) -> Skill | None:
         text = path_resolved.read_text(encoding="utf-8")
     except (OSError, UnicodeError, RuntimeError, ValueError):
         return None
+    return parse_skill_text(text, path_resolved.parent.name, str(path_resolved))
 
+
+def parse_skill_text(text: str, default_id: str, path: str = "") -> Skill | None:
+    """Parse SKILL.md text; None if it is not a valid skill. A leading UTF-8 BOM is ignored."""
+    text = text.removeprefix("﻿")
     if not text.startswith("---\n"):
         return None
     parts = text.split("---\n", 2)
@@ -44,7 +49,7 @@ def _parse_skill(path: Path, root: Path) -> Skill | None:
             return None
         metadata[key] = value
 
-    skill_id = metadata.get("id", path_resolved.parent.name)
+    skill_id = metadata.get("id", default_id)
     if not _SAFE_ID.fullmatch(skill_id):
         return None
 
@@ -64,7 +69,7 @@ def _parse_skill(path: Path, root: Path) -> Skill | None:
         name=metadata.get("name", skill_id),
         domain=metadata.get("domain", "general"),
         tags=tags,
-        path=str(path_resolved),
+        path=path,
         content=body.strip(),
     )
 

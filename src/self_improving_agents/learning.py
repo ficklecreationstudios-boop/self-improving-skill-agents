@@ -13,7 +13,7 @@ from typing import Any
 
 from .audit import AuditLedger
 from .models import Proposal, digest_text
-from .skills import discover_skills
+from .skills import discover_skills, parse_skill_text
 from .agents.review import propose_skill_update
 from .ollama import OllamaAdapter
 
@@ -65,7 +65,8 @@ def record_feedback(ledger: AuditLedger, *, task_id: str, task_text: str,
 def evaluate_candidate(*, skill_id: str, current_content: str,
                        candidate_content: str, max_chars: int = 20000) -> CandidateEvaluation:
     reasons: list[str] = []
-    frontmatter_ok = candidate_content.startswith("---\n") and "\n---\n" in candidate_content[4:]
+    frontmatter_ok = (candidate_content.startswith("---\n") and "\n---\n" in candidate_content[4:]
+                      and parse_skill_text(candidate_content, skill_id) is not None)  # loadable by discovery
     candidate_id = None
     if frontmatter_ok:
         for line in candidate_content.split("---\n", 2)[1].splitlines():

@@ -70,3 +70,15 @@ def test_cli_signed_approval_lifecycle(tmp_path, monkeypatch):
     ])
     main()
     assert target.read_text(encoding="utf-8") == new
+
+
+def test_propose_refuses_content_that_is_not_a_valid_skill(tmp_path, monkeypatch):
+    skill_dir = tmp_path / "skills" / "demo"; skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nid: demo\n---\nold", encoding="utf-8")
+    (tmp_path / "proposed.md").write_text("no frontmatter at all", encoding="utf-8")
+    output = tmp_path / "proposal.json"
+    monkeypatch.setattr(sys, "argv", ["skill-agents", "propose", "demo", str(tmp_path / "proposed.md"),
+                                      "--rationale", "r", "--skills", str(tmp_path / "skills"), "--output", str(output)])
+    with pytest.raises(SystemExit, match="not a valid SKILL.md"):
+        main()
+    assert not output.exists()

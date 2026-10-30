@@ -8,3 +8,9 @@ def test_discovers_and_selects_relevant_skill():
 
 def test_context_proxy_is_explicitly_rough():
     assert context_proxy("one two three") == 3
+
+
+def test_leading_utf8_bom_does_not_hide_a_skill(tmp_path):
+    folder = tmp_path / "skills" / "demo"; folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_bytes(b"\xef\xbb\xbf---\nid: demo\nname: Demo\n---\nUse clear steps.")
+    assert [s.skill_id for s in discover_skills(tmp_path / "skills")] == ["demo"]
