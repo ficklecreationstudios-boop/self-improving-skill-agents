@@ -30,7 +30,8 @@ def test_unconfigured_adapter_does_not_make_network_request(monkeypatch):
     adapter = ollama.OllamaAdapter(model=None)
     assert not adapter.configured
     assert adapter.model is None
-    assert "No Ollama model configured" in adapter.generate("hello")
+    with pytest.raises(RuntimeError, match="No Ollama model configured; no model inference was performed"):
+        adapter.generate("hello")
 
 
 def test_omitted_model_uses_environment_default(monkeypatch):

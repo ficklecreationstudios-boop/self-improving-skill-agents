@@ -62,7 +62,7 @@ def test_task_lifecycle_routes_generates_reviews_delivers_and_audits(tmp_path):
     assert result.skill_ids == ["demo"]
     assert "[Skill: Python Testing]" in adapter.prompt
     assert "Use focused regression tests" in adapter.prompt
-    assert result.review.verdict == "generated"
+    assert result.review.verdict == "unverified_model_output"
     assert result.task_digest == digest_text(task.text)
     assert result.output_digest == digest_text(adapter.output)
 
@@ -73,7 +73,7 @@ def test_task_lifecycle_routes_generates_reviews_delivers_and_audits(tmp_path):
     assert events[0]["payload"]["skills"] == ["demo"]
     assert events[0]["payload"]["task_digest"] == result.task_digest
     assert events[0]["payload"]["output_digest"] == result.output_digest
-    assert events[0]["payload"]["review_verdict"] == "generated"
+    assert events[0]["payload"]["review_verdict"] == "unverified_model_output"
     assert AuditLedger(audit_path).verify()
 
 

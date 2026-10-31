@@ -77,7 +77,7 @@ Every case is run against the candidate; any failed substring assertion blocks p
 
 ## Model settings
 - `OLLAMA_MODEL`: the local model tag. If it isn't set, tasks are audited as not executed.
-- `OLLAMA_BASE_URL`: default `http://127.0.0.1:11434`.
+- `OLLAMA_BASE_URL`: default `http://127.0.0.1:11434`. It must be on this computer (`localhost`, `127.x.x.x` or `::1`), because prompts, skills and workspace text are sent to it. A remote server is refused unless `OLLAMA_ALLOW_REMOTE=1` is set, and it must then use `https://`. Addresses with a username, password, query or fragment are refused.
 - `OLLAMA_THINK`: exactly `true` or `false` when set.
 - `OLLAMA_TIMEOUT`: seconds per model request, from 0 (exclusive) to 3600; default `60`. Raise it when long answers time out on slower hardware. For example, `qwen3:8b` split between the CPU and a 6 GB GPU needed more than 60 s for some long answers.
 

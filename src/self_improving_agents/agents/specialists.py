@@ -12,6 +12,7 @@ class ExecutionResult:
     task_digest: str
     output_digest: str
     review: Review
+    model: str | None = None
 
 def execute_task(task: Task, skills: list[Skill], adapter: OllamaAdapter) -> ExecutionResult:
     context = "\n\n".join(f"[Skill: {s.name}]\n{s.content}" for s in skills)
@@ -19,4 +20,5 @@ def execute_task(task: Task, skills: list[Skill], adapter: OllamaAdapter) -> Exe
               f"Task:\n{task.text}\n\nSelected skill context:\n{context}")
     output = adapter.generate(prompt)
     review = review_output(task.text, output)
-    return ExecutionResult(output, [s.skill_id for s in skills], digest_text(task.text), digest_text(output), review)
+    return ExecutionResult(output, [s.skill_id for s in skills], digest_text(task.text), digest_text(output), review,
+                           getattr(adapter, "model", None))

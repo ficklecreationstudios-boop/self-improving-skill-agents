@@ -14,8 +14,8 @@ Implemented:
 - Applying a proposal requires the matching approval-signed record (proposal, key ID and signature digest) in the same audit ledger.
 - Prior-version archive and transaction journals; interrupted transactions can be reconciled or rolled back.
 - Hash-chained audit, cross-process writer lock, and fsync on append. On Windows the audit, governance and revocation-registry locks use LockFileEx, so a waiting writer is woken as soon as the holder releases. A lock not granted within the 10 s acquisition deadline fails closed with an error, and nothing is written. The deadline bounds the wait for the lock, not the total time to return: a pending request is cancelled and its completion awaited before its memory and handles are released, which can take longer if the driver or storage is slow. That cleanup tolerates repeated Ctrl+C, unlocks a lock that was granted during an interruption, and reports an unexpected unlock failure while still closing the handle.
-- No-model inference is recorded as not executed, rather than passed off as a model answer.
-- Network access occurs only when an Ollama model is explicitly configured.
+- No-model inference is recorded as not executed, rather than passed off as a model answer; the model adapter raises instead of returning any text when no model is configured. Answers from `ask` and `agent` are labelled on stderr as model output that is not fact-checked, `ask` reports the model in `generated_by`, and its review verdict is `unverified_model_output`: only a non-empty check, not a quality check.
+- Network access occurs only when an Ollama model is explicitly configured. The Ollama endpoint must be on this computer unless `OLLAMA_ALLOW_REMOTE=1` is set, and a remote endpoint must use https.
 
 Not implemented or not yet verified:
 - Independent review of the container sandbox, its support on platforms other than the tested Windows host, and a safe way to add future privileged tools.

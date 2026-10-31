@@ -1,5 +1,5 @@
 """Command-line entry point."""
-import argparse, difflib, json, os, secrets, subprocess, unicodedata
+import argparse, difflib, json, os, secrets, subprocess, sys, unicodedata
 from pathlib import Path
 from .models import Task, Proposal, Approval
 from .orchestrator import run_task, ModelNotConfiguredError
@@ -79,6 +79,10 @@ def show_for_review(proposal: Proposal, target: Path, current: str) -> None:
     ]))
 
 
+def model_output_label(model: str | None) -> str:
+    return f"Model output (Ollama model {model!r}), not fact-checked:"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="skill-agents")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -132,17 +136,23 @@ def main() -> None:
     if args.command == "ask":
         try:
             result = run_task(Task(args.text, args.domain), args.skills, args.audit)
-        except ModelNotConfiguredError as exc:
+        except (ModelNotConfiguredError, ValueError) as exc:  # ValueError: refused Ollama settings
             raise SystemExit(str(exc)) from exc
+        print(model_output_label(result.model), file=sys.stderr)
         print(result.output)
-        print(json.dumps({"skills": result.skill_ids, "review": result.review.__dict__, "task_digest": result.task_digest, "output_digest": result.output_digest}, indent=2))
+        print(json.dumps({"skills": result.skill_ids, "generated_by": {"provider": "ollama", "model": result.model},
+                          "review": result.review.__dict__, "task_digest": result.task_digest,
+                          "output_digest": result.output_digest}, indent=2))
     elif args.command == "agent":
         try:
             selected = select_skills(args.text, args.domain, discover_skills(args.skills))
+            adapter = OllamaAdapter()
             result = run_agent_task(Task(args.text, args.domain), ContainerCapabilityRegistry(args.workspace),
-                                    args.audit, OllamaAdapter(), max_steps=args.max_steps, skills=selected)
+                                    args.audit, adapter, max_steps=args.max_steps, skills=selected)
         except (RuntimeError, ValueError) as exc:
             raise SystemExit(str(exc)) from exc
+        if result.stop_reason == "final_answer":
+            print(model_output_label(getattr(adapter, "model", None)), file=sys.stderr)
         print(result.output)
         print(json.dumps({"skill_ids": [skill.skill_id for skill in selected],
                           "tool_call_count": len(result.tool_calls), "tool_names": [call["name"] for call in result.tool_calls],

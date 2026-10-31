@@ -1,7 +1,9 @@
 """Optional, explicitly configured Ollama HTTP adapter with bounded input/output."""
 from __future__ import annotations
+import ipaddress
 import json
 import os
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 
@@ -13,6 +15,36 @@ MAX_TIMEOUT_SECONDS = 3600.0
 
 
 _MODEL_UNSET = object()
+
+
+def _is_loopback(host: str) -> bool:
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _checked_base_url(url: str) -> str:
+    """Prompts, skills and workspace text are sent to this server, so it must stay on this computer unless
+    the user explicitly allows a remote one, which must then use https."""
+    url = url.rstrip("/")
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        raise ValueError("OLLAMA_BASE_URL must use http:// or https://")
+    if not parts.hostname:
+        raise ValueError("OLLAMA_BASE_URL must name a host")
+    if parts.username is not None or parts.password is not None or parts.query or parts.fragment:
+        raise ValueError("OLLAMA_BASE_URL must not contain credentials, a query or a fragment")
+    parts.port  # raises ValueError for an invalid port
+    if not _is_loopback(parts.hostname):
+        if os.getenv("OLLAMA_ALLOW_REMOTE") != "1":
+            raise ValueError(f"OLLAMA_BASE_URL host {parts.hostname!r} is not on this computer; prompts and file "
+                             "contents would leave it. Set OLLAMA_ALLOW_REMOTE=1 to allow a remote server.")
+        if parts.scheme != "https":
+            raise ValueError("A remote OLLAMA_BASE_URL must use https://")
+    return url
 
 
 def _timeout_from_environment() -> float:
@@ -39,9 +71,7 @@ class OllamaAdapter:
             self.model = model
         else:
             raise TypeError("model must be a string or None")
-        self.base_url = (base_url or os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")).rstrip("/")
-        if not self.base_url.startswith(("http://", "https://")):
-            raise ValueError("OLLAMA_BASE_URL must use http:// or https://")
+        self.base_url = _checked_base_url(base_url or os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434"))
         if timeout <= 0:
             raise ValueError("timeout must be positive")
         self.timeout = timeout
@@ -63,7 +93,8 @@ class OllamaAdapter:
 
     def generate(self, prompt: str) -> str:
         if not self.model:
-            return "No Ollama model configured. Set OLLAMA_MODEL to enable local inference. This is a configuration notice, not model-generated advice."
+            # Never return text that could be mistaken for an answer when no model ran.
+            raise RuntimeError("No Ollama model configured; no model inference was performed. Set OLLAMA_MODEL.")
         if not isinstance(prompt, str) or len(prompt) > MAX_PROMPT_CHARS:
             raise RuntimeError(f"Ollama prompt exceeds {MAX_PROMPT_CHARS}-character limit")
         request_payload = {
