@@ -1,9 +1,12 @@
+import ctypes
+import gc
 import json
 import os
 import subprocess
 import sys
 import threading
 import time
+import weakref
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -324,3 +327,365 @@ def test_audit_governance_and_registry_locks_under_mixed_contention(tmp_path):
     assert types.count("proposal_approval_signed") == 8
     assert types.count("approval_key_revoked") == 8
     assert set(other_keys) <= revocation.revoked_key_ids()
+
+
+# --- Cleanup under repeated interruption (Windows) -------------------------------------------------
+
+ERROR_IO_INCOMPLETE = 996
+
+
+@pytest.fixture(autouse=True)
+def no_request_left_unsettled():
+    yield
+    assert not getattr(file_lock, "_UNSETTLED", set()), "every lock request must be fully settled"
+
+
+class TracingKernel:
+    """Wraps the real kernel32, injects KeyboardInterrupts at chosen calls, and records lifetime violations.
+
+    An OVERLAPPED record handed to the kernel is outstanding until a GetOverlappedResult call shows it
+    complete. Closing its file or event handle, or freeing it, while it is outstanding is a violation.
+    The tracer keeps only weak references, so a record freed by the code under test is noticed.
+    """
+
+    def __init__(self, real):
+        self.real = real
+        self.calls = []        # calls made by this thread; lifetime checks cover all threads
+        self.outstanding = {}  # id(record) -> (weakref to record, file handle, event handle, call name)
+        self.violations = []
+        self.interrupts = []   # [name, phase, predicate, remaining]
+        self.overrides = {}    # name -> function(real_function, *args) -> (result, last_error)
+        self.thread = threading.get_ident()  # like Ctrl+C, injected interrupts reach only this thread
+
+    def interrupt(self, name, phase, times=1, when=lambda args: True):
+        self.interrupts.append([name, phase, when, times])
+
+    def _maybe_interrupt(self, name, phase, args):
+        for rule in self.interrupts if threading.get_ident() == self.thread else ():
+            if rule[0] == name and rule[1] == phase and rule[3] > 0 and rule[2](args):
+                rule[3] -= 1
+                raise KeyboardInterrupt(f"injected {phase} {name}")
+
+    def __getattr__(self, name):
+        real = getattr(self.real, name)
+
+        def call(*args):
+            self._maybe_interrupt(name, "before", args)
+            if name == "CloseHandle":
+                self._check_close(args[0])
+            if name in self.overrides:
+                result, error = self.overrides[name](real, *args)
+            else:
+                result = real(*args)
+                error = ctypes.get_last_error()
+            if threading.get_ident() == self.thread:
+                self.calls.append((name, args, result, error))
+            self._observe(name, args, result, error)
+            ctypes.set_last_error(error)
+            self._maybe_interrupt(name, "after", args)
+            return result
+        return call
+
+    def _observe(self, name, args, result, error):
+        if name in ("LockFileEx", "UnlockFileEx") and not result and error == 997:
+            record = args[-1]._obj
+            self.outstanding[id(record)] = (weakref.ref(record), args[0], record.hEvent, name)
+        elif name == "GetOverlappedResult" and (result or error != ERROR_IO_INCOMPLETE):
+            entry = self.outstanding.pop(id(args[1]._obj), None)
+            if entry and entry[0]() is None:
+                self.violations.append(f"{entry[3]} record was freed before it completed")
+
+    def _check_close(self, handle):
+        for ref, file_handle, event, name in self.outstanding.values():
+            if handle in (file_handle, event):
+                self.violations.append(f"handle closed while {name} was outstanding")
+
+    def assert_clean(self):
+        unfired = [f"{rule[1]} {rule[0]} x{rule[3]}" for rule in self.interrupts if rule[3]]
+        self.interrupts.clear()
+        assert not unfired, f"injected interrupts that never fired: {unfired}"
+        for ref, _, _, name in self.outstanding.values():
+            self.violations.append(f"{name} never observed complete" + (" (record freed)" if ref() is None else ""))
+        assert not self.violations, self.violations
+
+    def names(self):
+        return [call[0] for call in self.calls]
+
+
+@pytest.fixture
+def tracer(monkeypatch):
+    tracing = TracingKernel(file_lock._kernel32())
+    monkeypatch.setattr(file_lock, "_kernel32", lambda: tracing)
+    return tracing
+
+
+def interrupt_first_wait(monkeypatch):
+    """The first Ctrl+C arrives while waiting for the lock."""
+    def interrupted(event, milliseconds):
+        raise KeyboardInterrupt("first interrupt")
+    monkeypatch.setattr(file_lock, "_wait", interrupted)
+
+
+def assert_lock_free(lock, within=0.25):
+    started = time.monotonic()
+    with exclusive_lock(lock, timeout=2):
+        assert time.monotonic() - started < within, "the lock must have been given back"
+
+
+def waits(args):
+    return bool(args[-1])
+
+
+@windows_only
+def test_second_interrupt_right_after_cancel_still_waits_for_completion(tmp_path, monkeypatch, tracer):
+    lock = tmp_path / "x.lock"
+    thread, _ = hold_in_thread(lock, 0.8)
+    interrupt_first_wait(monkeypatch)
+    tracer.interrupt("CancelIoEx", "after")
+    with pytest.raises(KeyboardInterrupt, match="first interrupt"):
+        with exclusive_lock(lock):
+            pytest.fail("body must not run")
+    tracer.assert_clean()
+    thread.join()
+    assert_lock_free(lock)
+
+
+@windows_only
+def test_interrupt_before_the_cancellation_wait_begins(tmp_path, monkeypatch, tracer):
+    lock = tmp_path / "x.lock"
+    thread, _ = hold_in_thread(lock, 0.8)
+    interrupt_first_wait(monkeypatch)
+    tracer.interrupt("GetOverlappedResult", "before", when=waits)
+    with pytest.raises(KeyboardInterrupt, match="first interrupt"):
+        with exclusive_lock(lock):
+            pytest.fail("body must not run")
+    tracer.assert_clean()
+    thread.join()
+    assert_lock_free(lock)
+
+
+@windows_only
+def test_interrupts_at_every_cleanup_step(tmp_path, monkeypatch, tracer):
+    lock = tmp_path / "x.lock"
+    thread, _ = hold_in_thread(lock, 0.8)
+    interrupt_first_wait(monkeypatch)
+    for name, phase in [("CancelIoEx", "before"), ("CancelIoEx", "after"), ("GetOverlappedResult", "before"),
+                        ("GetOverlappedResult", "after"), ("CloseHandle", "after")]:
+        tracer.interrupt(name, phase, times=2)
+    with pytest.raises(KeyboardInterrupt, match="first interrupt"):
+        with exclusive_lock(lock):
+            pytest.fail("body must not run")
+    thread.join()
+    tracer.assert_clean()
+    assert tracer.names().count("CloseHandle") == 2
+    assert_lock_free(lock)
+
+
+@windows_only
+def test_a_handle_is_never_closed_twice_when_closing_is_interrupted(tmp_path, tracer):
+    lock = tmp_path / "x.lock"
+    tracer.interrupt("CloseHandle", "before")  # the earliest an interruption could land
+    with pytest.raises(KeyboardInterrupt):
+        with exclusive_lock(lock):
+            pass
+    tracer.assert_clean()
+    closed = [call[1][0] for call in tracer.calls if call[0] == "CloseHandle"]
+    assert len(closed) == len(set(closed)) == 1, "the other handle is leaked, never closed twice"
+    assert_lock_free(lock)
+
+
+@windows_only
+def test_grant_racing_cleanup_is_given_back_despite_repeated_interrupts(tmp_path, monkeypatch, tracer):
+    lock = tmp_path / "x.lock"
+    release, held = threading.Event(), threading.Event()
+
+    def holder():
+        with exclusive_lock(lock):
+            held.set()
+            release.wait(5)
+
+    thread = threading.Thread(target=holder); thread.start()
+    assert held.wait(5)
+
+    def grant_then_interrupt(event, milliseconds):
+        release.set()
+        thread.join(5)
+        tracer.real.WaitForSingleObject(event, 2000)  # the pending request is granted here
+        raise KeyboardInterrupt("first interrupt")
+
+    monkeypatch.setattr(file_lock, "_wait", grant_then_interrupt)
+    tracer.interrupt("GetOverlappedResult", "after", when=waits)  # the cancellation wait's result is lost
+    tracer.interrupt("UnlockFileEx", "after")                      # the unlock's result is lost
+    with pytest.raises(KeyboardInterrupt, match="first interrupt"):
+        with exclusive_lock(lock):
+            pytest.fail("body must not run")
+    tracer.assert_clean()
+    assert any(name == "UnlockFileEx" and result for name, _, result, _ in tracer.calls)
+    assert_lock_free(lock)
+
+
+def report_pending(real, *args):
+    """UnlockFileEx that unlocks, then reports ERROR_IO_PENDING, which the API permits."""
+    real(*args)
+    return 0, 997
+
+
+@windows_only
+def test_pending_unlock_completes_before_handles_close_despite_an_interrupt(tmp_path, tracer):
+    lock = tmp_path / "x.lock"
+    tracer.overrides["UnlockFileEx"] = report_pending
+    tracer.interrupt("GetOverlappedResult", "before", when=waits)
+    with pytest.raises(KeyboardInterrupt, match="injected before GetOverlappedResult"):
+        with exclusive_lock(lock):
+            pass
+    tracer.assert_clean()
+    names = tracer.names()
+    last_wait = len(names) - 1 - names[::-1].index("GetOverlappedResult")
+    assert names.index("UnlockFileEx") < last_wait < names.index("CloseHandle")
+    tracer.overrides.clear()
+    assert_lock_free(lock)
+
+
+@windows_only
+def test_interrupt_right_after_an_immediate_grant_unlocks_before_closing(tmp_path, tracer):
+    lock = tmp_path / "x.lock"
+    tracer.interrupt("LockFileEx", "after")  # granted at once, but the result is lost
+    with pytest.raises(KeyboardInterrupt):
+        with exclusive_lock(lock):
+            pytest.fail("body must not run")
+    tracer.assert_clean()
+    names = tracer.names()
+    unlocked = [i for i, call in enumerate(tracer.calls) if call[0] == "UnlockFileEx" and call[2]]
+    assert unlocked and unlocked[0] < names.index("CloseHandle"), "the granted lock must be unlocked explicitly"
+    assert_lock_free(lock)
+
+
+@windows_only
+def test_a_record_whose_result_was_lost_is_never_freed(tmp_path, tracer):
+    lock = tmp_path / "x.lock"
+    tracer.interrupt("LockFileEx", "after")
+    with pytest.raises(KeyboardInterrupt):
+        with exclusive_lock(lock):
+            pytest.fail("body must not run")
+    lock_record = next(call[1][-1]._obj for call in tracer.calls if call[0] == "LockFileEx")
+    assert any(record is lock_record for record in file_lock._RETAINED)
+
+
+@windows_only
+def test_interrupt_after_the_grant_is_recorded_unlocks_before_closing(tmp_path, monkeypatch, tracer):
+    lock = tmp_path / "x.lock"
+    real_acquire = file_lock._acquire
+
+    def acquire_then_interrupt(request, timeout):
+        real_acquire(request, timeout)
+        raise KeyboardInterrupt("before the body")
+
+    monkeypatch.setattr(file_lock, "_acquire", acquire_then_interrupt)
+    with pytest.raises(KeyboardInterrupt, match="before the body"):
+        with exclusive_lock(lock):
+            pytest.fail("body must not run")
+    monkeypatch.setattr(file_lock, "_acquire", real_acquire)
+    names = tracer.names()
+    assert "UnlockFileEx" in names and names.index("UnlockFileEx") < names.index("CloseHandle")
+    assert tracer.calls[names.index("UnlockFileEx")][2], "the unlock must succeed"
+    assert_lock_free(lock)
+
+
+def fail_unlock(real, *args):
+    return 0, 33  # ERROR_LOCK_VIOLATION, without unlocking
+
+
+@windows_only
+def test_unlock_failure_is_reported_and_the_handles_still_closed(tmp_path, tracer):
+    lock = tmp_path / "x.lock"
+    tracer.overrides["UnlockFileEx"] = fail_unlock
+    ran = []
+    with pytest.raises(file_lock.LockReleaseError, match="UnlockFileEx failed") as error:
+        with exclusive_lock(lock):
+            ran.append(True)
+    assert ran and isinstance(error.value, OSError)
+    assert "protected work finished" in str(error.value)
+    assert tracer.names().count("CloseHandle") == 2
+    tracer.overrides.clear()
+    assert_lock_free(lock, within=2)  # closing the handle released the lock
+
+
+@windows_only
+def test_unlock_failure_is_noted_on_an_exception_already_propagating(tmp_path, tracer):
+    lock = tmp_path / "x.lock"
+    tracer.overrides["UnlockFileEx"] = fail_unlock
+    with pytest.raises(ValueError, match="work failed") as error:
+        with exclusive_lock(lock):
+            raise ValueError("work failed")
+    assert any("UnlockFileEx failed" in note for note in error.value.__notes__)
+    assert tracer.names().count("CloseHandle") == 2
+    tracer.overrides.clear()
+    assert_lock_free(lock, within=2)
+
+
+@windows_only
+def test_deadline_is_for_acquisition_and_cleanup_still_completes(tmp_path, tracer):
+    lock = tmp_path / "x.lock"
+    thread, _ = hold_in_thread(lock, 1.5)
+
+    def slow_cancellation(real, *args):
+        if args[-1]:
+            time.sleep(0.5)  # cancellation takes a while to complete
+        result = real(*args)
+        return result, ctypes.get_last_error()
+
+    tracer.overrides["GetOverlappedResult"] = slow_cancellation
+    started = time.monotonic()
+    with pytest.raises(LockTimeoutError):
+        with exclusive_lock(lock, timeout=0.3):
+            pytest.fail("body must not run")
+    assert time.monotonic() - started >= 0.75, "the call returns only once cancellation has completed"
+    tracer.assert_clean()
+    thread.join()
+
+
+@windows_only
+def test_interrupt_during_timeout_cleanup_is_raised_with_the_timeout_as_context(tmp_path, tracer):
+    lock = tmp_path / "x.lock"
+    thread, _ = hold_in_thread(lock, 1.0)
+    tracer.interrupt("CancelIoEx", "after")
+    with pytest.raises(KeyboardInterrupt) as error:
+        with exclusive_lock(lock, timeout=0.3):
+            pytest.fail("body must not run")
+    assert isinstance(error.value.__context__, LockTimeoutError)
+    tracer.assert_clean()
+    thread.join()
+
+
+@windows_only
+def test_escaped_cleanup_keeps_the_request_until_it_is_settled_at_exit(tmp_path, monkeypatch, tracer):
+    lock = tmp_path / "x.lock"
+    release, held = threading.Event(), threading.Event()
+
+    def holder():
+        with exclusive_lock(lock):
+            held.set()
+            release.wait(5)
+
+    thread = threading.Thread(target=holder); thread.start()
+    assert held.wait(5)
+    interrupt_first_wait(monkeypatch)
+    real_settle = file_lock._settle
+
+    def escape(request):
+        raise KeyboardInterrupt("cleanup escaped")
+
+    monkeypatch.setattr(file_lock, "_settle", escape)
+    with pytest.raises(KeyboardInterrupt, match="cleanup escaped"):
+        with exclusive_lock(lock):
+            pytest.fail("body must not run")
+    monkeypatch.setattr(file_lock, "_settle", real_settle)
+    abandoned = [r for r in file_lock._UNSETTLED if r.owner is threading.current_thread()]
+    assert len(abandoned) == 1 and abandoned[0].handle, "the request and its handle must be kept"
+    gc.collect()
+    assert not [c for c in tracer.calls if c[0] == "CloseHandle" and c[1][0] == abandoned[0].handle]
+    release.set(); thread.join(5)  # the abandoned request may now be granted
+    file_lock._settle_abandoned()
+    tracer.assert_clean()
+    assert not file_lock._UNSETTLED
+    assert_lock_free(lock)
