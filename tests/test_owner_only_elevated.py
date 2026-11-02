@@ -68,10 +68,11 @@ def test_restriction_sets_the_owner_after_granting_access(tmp_path, monkeypatch)
     target = tmp_path / "file.txt"
     target.write_text("x")
     calls = []
+    monkeypatch.setattr(owner_only, "_replace_windows_dacl", lambda path, sddl: calls.append("dacl"))
     monkeypatch.setattr(owner_only.subprocess, "run", lambda cmd, **k: calls.append(cmd[2]))
     monkeypatch.setattr(owner_only, "_windows_security_descriptor", lambda path: "O:BAD:")
     owner_only.restrict_to_current_user(target)
-    assert calls == ["/inheritance:r", "/setowner"]
+    assert calls == ["dacl", "/setowner"]
 
 
 def test_saving_takes_ownership_of_the_temp_file_before_checking_it(tmp_path, monkeypatch):
@@ -134,3 +135,74 @@ def test_registry_works_when_new_files_belong_to_administrators(tmp_path, monkey
         revocation._store_unlocked(path, [])
     assert owner_only_problem(path.parent, directory=True) is None
     assert owner_only_problem(path) is None
+
+
+def _add_uninherited_system_entry(target, directory):
+    """CI run 41389807313 reported (A;OICI;FA;;;SY) on the registry folder: not marked as inherited, list protected."""
+    grant = "*S-1-5-18:(OI)(CI)(F)" if directory else "*S-1-5-18:(F)"
+    subprocess.run(["icacls", str(target), "/grant", grant], capture_output=True, check=True)
+    subprocess.run(["icacls", str(target), "/inheritance:d"], capture_output=True, check=True)
+    assert re.search(r"D:P[A-Z]*\(", owner_only._windows_security_descriptor(target))
+    assert ";;;SY)" in owner_only._windows_security_descriptor(target)
+
+
+def test_a_system_entry_is_still_refused():
+    assert "another principal" in sddl_problem(f"O:{ME}D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;{ME})", ME)
+
+
+@windows_only
+@pytest.mark.parametrize("directory", [True, False])
+def test_restriction_removes_a_system_entry_not_marked_as_inherited(tmp_path, directory):
+    target = tmp_path / "target"
+    target.mkdir() if directory else target.write_text("x")
+    _add_uninherited_system_entry(target, directory)
+    owner_only.restrict_to_current_user(target, directory=directory)
+    assert owner_only_problem(target, directory=directory) is None
+    assert owner_only._windows_security_descriptor(target).count("(A;") == 1
+
+
+@windows_only
+def test_restriction_handles_a_folder_python_created_with_mode_700(tmp_path):
+    target = tmp_path / "target"
+    os.mkdir(target, 0o700)
+    owner_only.restrict_to_current_user(target, directory=True)
+    assert owner_only_problem(target, directory=True) is None
+
+
+@windows_only
+def test_restriction_removes_deny_entries(tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    subprocess.run(["icacls", str(target), "/deny", "*S-1-1-0:(W)"], capture_output=True, check=True)
+    owner_only.restrict_to_current_user(target, directory=True)
+    assert owner_only_problem(target, directory=True) is None
+
+
+@windows_only
+def test_files_in_a_restricted_folder_inherit_only_the_owner(tmp_path):
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    _add_uninherited_system_entry(folder, True)
+    owner_only.restrict_to_current_user(folder, directory=True)
+    child = folder / "file.txt"
+    child.write_text("x")
+    own_as_current_user(child)
+    assert owner_only_problem(child) is None
+    assert "ID;" in owner_only._windows_security_descriptor(child)
+
+
+@windows_only
+def test_restriction_of_a_missing_path_raises(tmp_path):
+    with pytest.raises(OSError, match="cannot set the access-control list"):
+        owner_only.restrict_to_current_user(tmp_path / "missing")
+
+
+@windows_only
+def test_registry_init_succeeds_in_a_folder_with_a_system_entry(tmp_path, monkeypatch):
+    directory = tmp_path / "profile" / revocation.APP_DIRECTORY
+    directory.mkdir(parents=True)
+    _add_uninherited_system_entry(directory, True)
+    monkeypatch.setattr(revocation, "registry_dir", lambda: directory)
+    revocation.init_registry()
+    assert owner_only_problem(directory, directory=True) is None
+    assert owner_only_problem(revocation.registry_path()) is None

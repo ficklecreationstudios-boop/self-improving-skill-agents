@@ -25,10 +25,43 @@ def restrict_to_current_user(path: Path, *, directory: bool = False) -> None:
     if os.name != "nt":
         path.chmod(0o700 if directory else 0o600)
         return
-    grant = f"*{current_user_sid()}:(OI)(CI)(F)" if directory else f"*{current_user_sid()}:(F)"
-    subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", grant],
-                   capture_output=True, text=True, timeout=30, check=True)
+    _replace_windows_dacl(path, f"D:P(A;{'OICI' if directory else ''};FA;;;{current_user_sid()})")
     own_as_current_user(path)
+
+
+def _replace_windows_dacl(path: Path, sddl: str) -> None:
+    """Replace path's whole access-control list. icacls /inheritance:r can leave entries not marked as inherited."""
+    import ctypes
+    from ctypes import wintypes
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    from_string = advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW
+    from_string.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p),
+                            ctypes.POINTER(wintypes.ULONG)]
+    from_string.restype = wintypes.BOOL
+    get_dacl = advapi32.GetSecurityDescriptorDacl
+    get_dacl.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.BOOL), ctypes.POINTER(ctypes.c_void_p),
+                         ctypes.POINTER(wintypes.BOOL)]
+    get_dacl.restype = wintypes.BOOL
+    set_security = advapi32.SetNamedSecurityInfoW
+    set_security.argtypes = [wintypes.LPCWSTR, ctypes.c_int, wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p,
+                             ctypes.c_void_p, ctypes.c_void_p]
+    set_security.restype = wintypes.DWORD
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
+    descriptor = ctypes.c_void_p()
+    if not from_string(sddl, 1, ctypes.byref(descriptor), None):
+        raise OSError(ctypes.get_last_error(), "cannot build the access-control list", str(path))
+    try:
+        present, defaulted, dacl = wintypes.BOOL(), wintypes.BOOL(), ctypes.c_void_p()
+        if not get_dacl(descriptor, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(defaulted)) or not present:
+            raise OSError(ctypes.get_last_error(), "cannot read the new access-control list", str(path))
+        info = 0x4 | 0x80000000  # DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION
+        error = set_security(str(path), 1, info, None, None, dacl, None)  # 1 = SE_FILE_OBJECT
+        if error:
+            raise OSError(error, "cannot set the access-control list", str(path))
+    finally:
+        kernel32.LocalFree(descriptor)
 
 
 def own_as_current_user(path: Path) -> None:
