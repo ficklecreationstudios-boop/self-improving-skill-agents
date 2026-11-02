@@ -62,6 +62,10 @@ jobs:
         if: always()
         shell: powershell
         run: Get-Content "$env:RUNNER_TEMP\d9\drill.log" -ErrorAction SilentlyContinue
+      - name: Report the end of the drill log as annotations
+        if: failure()
+        shell: powershell
+        run: Get-Content "$env:RUNNER_TEMP\d9\drill.log" -Tail 25 -ErrorAction SilentlyContinue | Where-Object { $_.Trim() } | ForEach-Object { Write-Host "::error::$_" }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
