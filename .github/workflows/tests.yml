@@ -65,7 +65,7 @@ jobs:
       - name: Report the end of the drill log as annotations
         if: failure()
         shell: powershell
-        run: Get-Content "$env:RUNNER_TEMP\d9\drill.log" -Tail 8 -ErrorAction SilentlyContinue | Where-Object { $_.Trim() } | ForEach-Object { Write-Host "::error::$_" }
+        run: Select-String -Path "$env:RUNNER_TEMP\d9\drill.log" -Pattern 'nothing was signed|failed:|did not match|refus|FAILED|Traceback|Error' | Select-Object -Last 9 | ForEach-Object { Write-Host "::error::$($_.Line)" }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

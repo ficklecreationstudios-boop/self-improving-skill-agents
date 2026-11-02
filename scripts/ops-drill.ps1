@@ -6,6 +6,8 @@ param([Parameter(Mandatory)][string]$Commit, [Parameter(Mandatory)][string]$Prev
       [Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$OutDir)
 # 'Continue': in Windows PowerShell 5.1, 'Stop' turns any native stderr line into a terminating error.
 $ErrorActionPreference = 'Continue'
+# On a UTF-8 console, Windows PowerShell 5.1 would otherwise start text piped to a program with a byte-order mark.
+$OutputEncoding = New-Object System.Text.UTF8Encoding $false
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'ops-drill.ps1 changes per-user state; it runs only on a disposable CI machine' }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $D = (Resolve-Path $OutDir).Path
@@ -55,14 +57,15 @@ Step 'init revocation registry' { & $sa init-revocation-registry }
 Copy-Item -Recurse "$src\skills" "$data\skills"
 $skill = "$data\skills\general\SKILL.md"
 $before = Hash $skill
-(Get-Content -Raw $skill) + "`nPrefer short numbered steps." | Out-File -Encoding utf8 -NoNewline "$D\proposed-1.md"
+function WriteNoBom($path, $text) { [IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding $false)) }
+WriteNoBom "$D\proposed-1.md" ((Get-Content -Raw $skill) + "`nPrefer short numbered steps.")
 $k1 = (Step 'init first approval key' { & $sa init-approval-key $key1 }) | ConvertFrom-Json
 Step 'first key ACL' { icacls $key1 }
 Step 'list the first key as an approver' { & $sa add-approver --key-file $key1 --name drill-owner }
 Step 'propose' { & $sa propose general "$D\proposed-1.md" --rationale drill --skills "$data\skills" --output "$data\proposals\p1.json" }
 Expect ((Hash $skill) -eq $before) 'proposal is inert: skill unchanged'
-Step 'an unlisted name cannot sign' { 'general' | & $sa approve-proposal "$data\proposals\p1.json" --key-file $key1 --approver someone-else --reason drill --approve --approval-output "$data\approvals\denied.json" --audit $audit --archive $archive --skills "$data\skills" } @(1, 2)
-Expect (-not (Test-Path "$data\approvals\denied.json")) 'approver policy refused an unlisted name'
+$refused = Step 'an unlisted name cannot sign' { 'general' | & $sa approve-proposal "$data\proposals\p1.json" --key-file $key1 --approver someone-else --reason drill --approve --approval-output "$data\approvals\denied.json" --audit $audit --archive $archive --skills "$data\skills" } @(1, 2)
+Expect ($refused -match 'not listed' -and -not (Test-Path "$data\approvals\denied.json")) 'approver policy refused an unlisted name'
 Step 'approve' { 'general' | & $sa approve-proposal "$data\proposals\p1.json" --key-file $key1 --approver drill-owner --reason drill --approve --approval-output "$data\approvals\p1.json" --audit $audit --archive $archive --skills "$data\skills" }
 Step 'apply' { & $sa apply-proposal "$data\proposals\p1.json" "$data\approvals\p1.json" --key-file $key1 --skills "$data\skills" --archive $archive --audit $audit }
 $after = Hash $skill
@@ -74,10 +77,10 @@ Expect ((Hash $skill) -eq $after) 'replayed approval rejected; skill unchanged'
 $k2 = (Step 'init replacement key' { & $sa init-approval-key $key2 }) | ConvertFrom-Json
 Step 'list the replacement key' { & $sa add-approver --key-file $key2 --name drill-owner }
 Step 'revoke the old key' { & $sa revoke-approval-key $k1.key_id --reason "drill rotation" --audit $audit --archive $archive }
-(Get-Content -Raw $skill) + "`nName each step." | Out-File -Encoding utf8 -NoNewline "$D\proposed-2.md"
+WriteNoBom "$D\proposed-2.md" ((Get-Content -Raw $skill) + "`nName each step.")
 Step 'propose after rotation' { & $sa propose general "$D\proposed-2.md" --rationale rotation --skills "$data\skills" --output "$data\proposals\p2.json" }
-Step 'sign with the revoked key' { 'general' | & $sa approve-proposal "$data\proposals\p2.json" --key-file $key1 --approver drill-owner --reason drill --approve --approval-output "$data\approvals\revoked.json" --audit $audit --archive $archive --skills "$data\skills" } @(1, 2)
-Expect (-not (Test-Path "$data\approvals\revoked.json")) 'revoked key cannot sign'
+$refused = Step 'sign with the revoked key' { 'general' | & $sa approve-proposal "$data\proposals\p2.json" --key-file $key1 --approver drill-owner --reason drill --approve --approval-output "$data\approvals\revoked.json" --audit $audit --archive $archive --skills "$data\skills" } @(1, 2)
+Expect ($refused -match 'revoked' -and -not (Test-Path "$data\approvals\revoked.json")) 'revoked key cannot sign'
 Step 'sign with the replacement key' { 'general' | & $sa approve-proposal "$data\proposals\p2.json" --key-file $key2 --approver drill-owner --reason rotation --approve --approval-output "$data\approvals\p2.json" --audit $audit --archive $archive --skills "$data\skills" }
 Step 'apply with the replacement key' { & $sa apply-proposal "$data\proposals\p2.json" "$data\approvals\p2.json" --key-file $key2 --skills "$data\skills" --archive $archive --audit $audit }
 Expect ((Hash $skill) -ne $after) 'replacement key changed the skill'
