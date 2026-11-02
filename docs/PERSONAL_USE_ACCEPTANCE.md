@@ -1,5 +1,7 @@
 # Personal-use acceptance record (2026-10-30)
 
+> Historical record at `e6c60e9`. For the current state, see [COMPLETION_STATUS.md](COMPLETION_STATUS.md). Later work fixed several limits named here, and the owner later ended the external review process for personal use.
+
 **Scope: one owner, one Windows 11 host, local use only.** This record does **not** approve release, distribution, enterprise or production use by others, and it does not replace `DONE_CRITERIA.md` or `RELEASE_CHECKLIST.md`. Those stay **NOT APPROVED** for anything beyond personal use.
 
 - **Authority:** the owner's instruction of 2026-10-30 to finish all phases for single-user use, with no reviewers besides the implementer.

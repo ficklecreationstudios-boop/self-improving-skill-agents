@@ -92,3 +92,7 @@ This does not close D3 or D8. Still open: refusal-vs-non-attempt testing, live t
 - Power-loss fault injection across every transaction boundary, clean-machine operational walkthrough, and independent security review.
 
 No universal correctness, 100% safety, or production-readiness claim is supported by the current evidence.
+
+## Latest evidence - 2026-11-02
+
+See [COMPLETION_STATUS.md](COMPLETION_STATUS.md). Older sections above are historical; several "still open" items in them have since closed.

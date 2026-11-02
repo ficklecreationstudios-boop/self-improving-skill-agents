@@ -2,6 +2,8 @@
 
 Local-first Python framework for routing tasks to specialist agents, selectively loading skills, running a bounded allowlisted tool loop, recording feedback, generating screened skill-update proposals, and requiring signed approval before any skill mutation.
 
+**New here?** Start with [docs/HANDOFF.md](docs/HANDOFF.md): what this does, how to set it up on another machine, how to adapt it, and what is known not to work. Current status is in [docs/COMPLETION_STATUS.md](docs/COMPLETION_STATUS.md).
+
 ## Safety principles
 - Standard-library runtime; Ollama is optional and explicitly configured.
 - Skills, tasks, feedback, files and tool results are untrusted data.
@@ -88,4 +90,4 @@ The GitHub runner cannot access Ollama on your PC. Activate the project venv, se
 
 To run the opt-in prompt-injection benchmark against that exact local model, set `RUN_SECURITY_INTEGRATION=1` and `SECURITY_BENCHMARK_REPORT` to an absolute JSONL path outside the repository, then run `python -m pytest -q tests/test_prompt_injection_live.py`. The report contains model digest and evidence hashes, not raw outputs. This finite test corpus is not a universal safety proof.
 
-See `docs/DONE_CRITERIA.md`, `docs/ROADMAP.md`, and `SECURITY.md`. This remains a development system, not production-ready security software.
+See `docs/HANDOFF.md`, `docs/COMPLETION_STATUS.md`, `docs/DONE_CRITERIA.md`, `docs/ROADMAP.md`, and `SECURITY.md`. It is conditionally accepted for one person's use on one Windows PC and is not approved for release.

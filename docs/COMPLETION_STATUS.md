@@ -1,5 +1,7 @@
 # Completion status (2026-11-02)
 
+New to the project? Read [HANDOFF.md](HANDOFF.md) first.
+
 **Scope: one owner, one Windows 11 host, local use.** This is a status record, not a release approval. No merge, deployment or production adoption follows from it. `DONE_CRITERIA.md` and `RELEASE_CHECKLIST.md` remain the release standard, and that standard is **NOT APPROVED**.
 
 All validation was done by the implementer (Claude). None of it is independent. Evidence is outside the repository, under `D:\d8_os_test_temp`.
@@ -7,9 +9,10 @@ All validation was done by the implementer (Claude). None of it is independent. 
 ## Bottom line
 
 - **Implementation:** everything engineering could do on the remaining list is done.
-- **Not passed:** D3.7 live-model refusal **failed again**. It cannot be closed by more engineering on this model without tuning against its corpus.
-- **Not closable here:** independent review, two-person review, verified identity and a real power-loss test need other people or other equipment.
-- **Owner's call:** the release decision.
+- **Not passed:** D3.7 live-model refusal **failed again**. It cannot be closed by more engineering on this model without tuning against its corpus. The owner accepted this for personal use as a known limitation, not a pass, and kept the stronger prompt provisionally, with no further tuning against those cases.
+- **Not closable here:** two-person review, verified identity and a real power-loss test need other people or other equipment. The owner recorded independent review as not applicable to personal use; it stays required for any wider release.
+- **Adopted:** the owner authorized adopting `97794bbe83c82ca5f82de5810edfbe23914e0439` on the work branch for personal use. Nothing was merged to `main`, and nothing was deployed. Documentation commits may follow that commit.
+- **Owner's call:** any release decision.
 
 ## Candidate and results
 
@@ -42,7 +45,7 @@ All validation was done by the implementer (Claude). None of it is independent. 
 
 - **Docker CI: done.** `docker-sandbox` pulls the pinned image and fails if any real-sandbox test would skip. Sandbox tests now also run on Linux; application use remains Windows only.
 - **F7, ledger anchor: done.** `skill-agents anchor-audit` records the last event outside the ledger, and `verify-audit` then notices a full rewrite or truncation. A process running as this user could edit both files, so keep the printed hash off the machine too. Anchors are not automatic: one must be taken.
-- **D4.3 and D10, approver policy: done.** `skill-agents add-approver` binds a key to a name. Without a list, the single-operator default applies and is recorded in each signed event. **No real policy or anchor has been created for the owner.**
+- **D4.3 and D10, approver policy: done.** `skill-agents add-approver` binds a key to a name. Without a list, the single-operator default applies and is recorded in each signed event. The owner's real approver list and first ledger anchor were created at adoption. Their values are not recorded in this public repository.
 - **F6 / Fix 4B, faster ledger writes: decided not to do.** One write takes 48 ms at 3,000 entries, and a typical agent run adds 2 to 6 entries, so the cost does not justify the change in code that protects the ledger. Revisit if a ledger nears tens of thousands of entries.
 - **F9 tidy-up:** the dead expression in `agent_loop.py` is removed.
 - **SYSTEM entry origin: unexplained.** The fix replaces the whole access list, so it does not depend on the origin.
@@ -51,6 +54,12 @@ All validation was done by the implementer (Claude). None of it is independent. 
 
 The agent prompt now tells the model to decline out-of-scope requests. Attempts fell from 56/90 to 16/90 and benign tasks still work, but in the same run every ambiguous-case answer was a refusal, and two injected-content tasks refuse without doing the safe part. **The agent is safer in tests and less helpful on borderline requests.** The prompt is not a security control.
 
-## Known environment problem
+## After adoption
 
-On 2026-11-02 Docker Desktop lost its mount of `D:` ("no such device"). `C:` is unaffected. Container tools mount the application's own code, so `skill-agents agent` from `D:\sia_d8_os_sandbox` fails closed until Docker Desktop is restarted, or the code runs from `C:`.
+Run from the live folder at `97794bb`, not elevated, with Docker required: Windows on Python 3.14 and 3.11 each gave 538 passed, 0 failed, 14 skipped (8 symlink tests lacking the privilege, 6 live-model tests not enabled). A normal `skill-agents agent` run then read a file through the sandbox correctly, using a throwaway folder and ledger.
+
+**Not yet exercised:** a real sign-and-apply on real skills. It has only been drilled on disposable data.
+
+## Environment problem found and fixed
+
+On 2026-11-02 Docker Desktop lost its mount of `D:` ("no such device"), and container tools failed safely. Restarting Docker Desktop fixed it.
