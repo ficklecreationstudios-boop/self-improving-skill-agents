@@ -10,6 +10,7 @@ import pytest
 
 from self_improving_agents import container_capabilities as sandbox
 from self_improving_agents.capabilities import CapabilityRegistry
+from docker_support import DOCKER, docker_unavailable
 
 
 def make_registry(tmp_path, **kwargs):
@@ -71,7 +72,7 @@ def test_calculator_result_is_returned_from_container(tmp_path, monkeypatch):
         "result": {"value": 5, "expression": "2 + 3"},
     }
     launch = next(c[0] for c in calls if len(c[0]) > 1 and c[0][1] == "run")
-    assert launch[0] == "docker.exe"
+    assert launch[0] == DOCKER
     assert registry.image == sandbox.PINNED_IMAGE
 
 
@@ -146,7 +147,7 @@ def test_timeout_fails_closed_and_requests_cleanup(tmp_path, monkeypatch):
     registry = make_registry(tmp_path, timeout_seconds=0.25)
     calls = mock_docker_run(
         monkeypatch,
-        exception=subprocess.TimeoutExpired("docker.exe", 0.25),
+        exception=subprocess.TimeoutExpired(DOCKER, 0.25),
     )
 
     result = registry.invoke("calculator", {"expression": "2 + 3"})
@@ -221,28 +222,27 @@ def test_invalid_response_schema_is_rejected(tmp_path, monkeypatch):
 
 
 def test_real_docker_container_integration():
-    # Docker Desktop denies this host's C:\\Users\\...\\Temp bind mounts.
-    # Keep the real integration workspace beneath the D: checkout.
+    # The workspace sits beneath the checkout, which Docker must be able to bind-mount.
     # This test skips only when Docker or the pinned image is unavailable.
     try:
         info = subprocess.run(
-            ["docker.exe", "info", "--format", "{{.ServerVersion}}"],
+            [DOCKER, "info", "--format", "{{.ServerVersion}}"],
             capture_output=True,
             timeout=5,
             check=False,
         )
         if info.returncode != 0:
-            pytest.skip("Docker daemon is unavailable")
+            docker_unavailable("Docker daemon is unavailable")
         image = subprocess.run(
-            ["docker.exe", "image", "inspect", sandbox.PINNED_IMAGE],
+            [DOCKER, "image", "inspect", sandbox.PINNED_IMAGE],
             capture_output=True,
             timeout=5,
             check=False,
         )
         if image.returncode != 0:
-            pytest.skip("Pinned sandbox image is not locally available")
+            docker_unavailable("Pinned sandbox image is not locally available")
     except (OSError, subprocess.SubprocessError):
-        pytest.skip("Docker CLI or daemon is unavailable")
+        docker_unavailable("Docker CLI or daemon is unavailable")
 
     repo_root = Path(__file__).resolve().parents[1]
     workspace = repo_root / f".d8-docker-integration-{uuid.uuid4().hex}"

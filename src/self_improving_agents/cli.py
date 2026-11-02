@@ -11,7 +11,7 @@ from .agents.review import propose_skill_update
 from .governance.approval import Governance, GovernanceError
 from .approval_auth import validate_key, key_identifier, ApprovalSignatureError
 from .owner_only import restrict_to_current_user
-from . import revocation
+from . import approver_policy, audit_anchor, revocation
 from .learning import create_candidate_proposal, write_proposal, load_cases, LearningGateError
 from .quality_evaluation import evaluate_file
 from .ollama import OllamaAdapter
@@ -97,6 +97,13 @@ def main() -> None:
     evaluate.add_argument("--skills", default="skills"); evaluate.add_argument("--audit", default="data/evaluation-audit.jsonl")
     evaluate.add_argument("--output", required=True)
     audit = sub.add_parser("verify-audit", help="Verify the hash-chain audit ledger"); audit.add_argument("--audit", default="data/audit.jsonl")
+    audit.add_argument("--anchor-seq", type=int, help="Also require this event, as noted outside the machine")
+    audit.add_argument("--anchor-hash", help="The event_hash noted for --anchor-seq")
+    anchor = sub.add_parser("anchor-audit", help="Remember the ledger's last hash outside it, so a rewrite can be noticed")
+    anchor.add_argument("--audit", default="data/audit.jsonl")
+    add_approver = sub.add_parser("add-approver", help="List an approval key and name; once a list exists, only listed pairs may approve")
+    add_approver.add_argument("--key-file", required=True); add_approver.add_argument("--name", required=True)
+    sub.add_parser("list-approvers", help="Show the approver policy")
     recover_audit = sub.add_parser("recover-audit", help="Repair a torn final audit line after a crash, preserving the original"); recover_audit.add_argument("--audit", default="data/audit.jsonl")
     recover = sub.add_parser("recover", help="Recover interrupted skill updates from transaction journals")
     recover.add_argument("--skills", default="skills"); recover.add_argument("--archive", default="data/skill-archive"); recover.add_argument("--audit", default="data/audit.jsonl")
@@ -170,7 +177,41 @@ def main() -> None:
             raise SystemExit(str(exc)) from exc
         print(json.dumps({key: value for key, value in report.items() if key != "cases"}, indent=2))
         print(f"Full per-case report written to {args.output}")
-    elif args.command == "verify-audit": print("VALID" if AuditLedger(args.audit).verify() else "INVALID")
+    elif args.command == "verify-audit":
+        if (args.anchor_seq is None) != (args.anchor_hash is None):
+            raise SystemExit("--anchor-seq and --anchor-hash must be given together")
+        ledger = AuditLedger(args.audit)
+        if not ledger.verify():
+            print("INVALID")
+        else:
+            try:
+                problems = audit_anchor.anchor_problems(args.audit)
+            except audit_anchor.AuditAnchorError as exc:
+                problems = [str(exc)]
+            if args.anchor_seq is not None:
+                problem = audit_anchor.check_event(ledger._events(), args.anchor_seq, args.anchor_hash)
+                problems += [problem] if problem else []
+            if problems:
+                print("INVALID: " + "; ".join(problems))
+                raise SystemExit(2)
+            print("VALID")
+    elif args.command == "anchor-audit":
+        try:
+            entry = audit_anchor.record_anchor(args.audit)
+        except audit_anchor.AuditAnchorError as exc:
+            raise SystemExit(f"anchor-audit failed: {exc}") from exc
+        print(json.dumps({"status": "anchored", "seq": entry["seq"], "event_hash": entry["event_hash"],
+                          "note": "Also keep this hash somewhere off this computer; check it with verify-audit --anchor-seq and --anchor-hash."}, indent=2))
+    elif args.command == "add-approver":
+        try:
+            print(json.dumps(approver_policy.add_approver(key_identifier(read_approval_key(args.key_file)), args.name), indent=2))
+        except approver_policy.ApproverPolicyError as exc:
+            raise SystemExit(f"add-approver failed: {exc}") from exc
+    elif args.command == "list-approvers":
+        try:
+            print(json.dumps(approver_policy.list_approvers(), indent=2))
+        except approver_policy.ApproverPolicyError as exc:
+            raise SystemExit(f"list-approvers failed: {exc}") from exc
     elif args.command == "recover-audit":
         result = AuditLedger(args.audit).recover_torn_tail()
         print(json.dumps(result, indent=2))

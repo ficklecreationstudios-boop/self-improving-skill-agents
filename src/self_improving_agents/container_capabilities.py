@@ -262,6 +262,9 @@ class CapabilitySandboxError(RuntimeError):
     """The OS sandbox could not safely execute a capability."""
 
 
+DEFAULT_DOCKER = "docker.exe" if os.name == "nt" else "docker"
+
+
 class ContainerCapabilityRegistry:
     """Same registry interface, but every invocation runs in a fresh container."""
 
@@ -269,7 +272,7 @@ class ContainerCapabilityRegistry:
         self,
         workspace: str | Path,
         *,
-        docker_executable: str = "docker.exe",
+        docker_executable: str = DEFAULT_DOCKER,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         image: str = PINNED_IMAGE,
     ):

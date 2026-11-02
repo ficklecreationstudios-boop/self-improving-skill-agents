@@ -4,7 +4,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import pytest
 
-from self_improving_agents import revocation
+from self_improving_agents import approver_policy, audit_anchor, revocation
 
 
 @pytest.fixture(scope="session")
@@ -20,6 +20,8 @@ def isolated_revocation_registry(_session_revocation_dir, monkeypatch):
     """
     monkeypatch.setattr(revocation, "registry_dir", lambda: _session_revocation_dir)
     path = revocation.registry_path()
+    for name in (approver_policy.POLICY_NAME, audit_anchor.ANCHORS_NAME):
+        (_session_revocation_dir / name).unlink(missing_ok=True)
     if path.is_file():
         with revocation._locked(path.parent):
             revocation._store_unlocked(path, [])

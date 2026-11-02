@@ -24,3 +24,46 @@ jobs:
       - run: python -m pip install -r requirements-test.lock
       - run: python -m pip install --no-build-isolation -e .
       - run: pytest -q
+
+  docker-sandbox:
+    # Windows runners have no Linux containers, so this is Linux Docker only. D8_REQUIRE_DOCKER makes a skip fail.
+    runs-on: ubuntu-latest
+    env:
+      D8_REQUIRE_DOCKER: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: python -m pip install -r requirements-test.lock
+      - run: python -m pip install --no-build-isolation -e .
+      - name: Pull the pinned sandbox image
+        run: docker pull "$(python -c 'from self_improving_agents.container_capabilities import PINNED_IMAGE; print(PINNED_IMAGE)')"
+      - name: Run the real sandbox tests
+        run: |
+          export D8_CONTAINER_TEST_ROOT="$RUNNER_TEMP/d8-container-root"
+          mkdir -p "$D8_CONTAINER_TEST_ROOT"
+          pytest -q -rs tests/test_container_capabilities.py tests/test_container_missing_image.py tests/test_container_os_sandbox.py tests/test_container_stuck_cleanup.py tests/test_container_workspace_integration.py tests/test_forced_attack_enforcement.py
+
+  clean-windows-ops-drill:
+    # D9: a hosted runner is a clean machine that is thrown away afterwards, so the drill may change per-user state.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Run the operations drill
+        shell: powershell
+        run: scripts/ops-drill.ps1 -Commit $env:GITHUB_SHA -PrevCommit ce15375a5180018132d0d2a19d0c33bdb34d3c34 -Source $env:GITHUB_WORKSPACE -OutDir "$env:RUNNER_TEMP\d9"
+      - name: Show the drill log
+        if: always()
+        shell: powershell
+        run: Get-Content "$env:RUNNER_TEMP\d9\drill.log" -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: d9-drill-log
+          path: ${{ runner.temp }}/d9/drill.log

@@ -96,7 +96,8 @@ def test_signing_records_the_approval_in_the_ledger(tmp_path):
     _, ledger, _, proposal, approval = signed_setup(tmp_path)
     signed = [event["payload"] for event in ledger._events() if event["type"] == "proposal_approval_signed"]
     assert signed == [{"proposal_digest": proposal.proposal_digest, "approver": "me", "key_id": approval.key_id,
-                       "approval_signature_digest": digest_text(approval.signature), "reason": "reviewed"}]
+                       "approval_signature_digest": digest_text(approval.signature), "reason": "reviewed",
+                       "authorized_by": "single_operator_default"}]
 
 
 def test_apply_requires_a_matching_signed_record_in_the_selected_ledger(tmp_path):

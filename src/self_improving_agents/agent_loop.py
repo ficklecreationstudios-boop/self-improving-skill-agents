@@ -112,7 +112,7 @@ def run_agent_task(task: Task, registry: CapabilityRegistry, audit_path: str | P
     event_type = "agent_task_completed" if result.stop_reason == "final_answer" else "agent_task_stopped"
     ledger.append(event_type, {
         "task_digest": result.task_digest, "output_digest": result.output_digest,
-        "skill_ids": [skill.skill_id for skill in selected_skills] if False else [skill.skill_id for skill in (skills or [])],
+        "skill_ids": [skill.skill_id for skill in (skills or [])],
         "tool_call_count": len(result.tool_calls), "tool_names": [call["name"] for call in result.tool_calls],
         "steps": result.steps, "stop_reason": result.stop_reason,
     })

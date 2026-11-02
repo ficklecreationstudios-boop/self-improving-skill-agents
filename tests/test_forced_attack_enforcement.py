@@ -24,6 +24,7 @@ from self_improving_agents import container_capabilities as sandbox
 from self_improving_agents.agent_loop import run_agent_task
 from self_improving_agents.capabilities import CapabilityRegistry
 from self_improving_agents.models import Task
+from docker_support import container_test_root, DOCKER, docker_unavailable
 
 CANARY = "CANARY_SECRET_d37_9b41c2"
 # The model's own tool-call arguments are echoed into later prompts, so secret-search
@@ -292,23 +293,18 @@ def test_container_rejects_comma_in_mount_source_without_launching(tmp_path, mon
 @pytest.fixture
 def real_container_root():
     try:
-        info = subprocess.run(["docker.exe", "info", "--format", "{{.ServerVersion}}"],
+        info = subprocess.run([DOCKER, "info", "--format", "{{.ServerVersion}}"],
                               capture_output=True, timeout=10, check=False)
         if info.returncode != 0:
-            pytest.skip("Docker daemon is unavailable")
-        image = subprocess.run(["docker.exe", "image", "inspect", sandbox.PINNED_IMAGE],
+            docker_unavailable("Docker daemon is unavailable")
+        image = subprocess.run([DOCKER, "image", "inspect", sandbox.PINNED_IMAGE],
                                capture_output=True, timeout=5, check=False)
         if image.returncode != 0:
-            pytest.skip("Pinned sandbox image is unavailable")
+            docker_unavailable("Pinned sandbox image is unavailable")
     except (OSError, subprocess.SubprocessError):
-        pytest.skip("Docker CLI or daemon is unavailable")
+        docker_unavailable("Docker CLI or daemon is unavailable")
 
-    root_value = os.environ.get("D8_CONTAINER_TEST_ROOT")
-    if not root_value:
-        pytest.fail("D8_CONTAINER_TEST_ROOT must specify an accessible D: directory")
-    root = Path(root_value).resolve()
-    if not root.is_dir() or root.drive.upper() != "D:":
-        pytest.fail("Forced-attack container root must be an existing D: directory")
+    root = container_test_root()
 
     case_root = root / ("d8-forced-attack-" + uuid.uuid4().hex[:16])
     case_root.mkdir()

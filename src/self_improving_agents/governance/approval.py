@@ -9,6 +9,7 @@ import tempfile
 from ..models import Proposal, Approval, digest_text
 from ..audit import AuditLedger
 from ..skills import discover_skills, parse_skill_text
+from .. import approver_policy
 from ..approval_auth import sign_approval, verify_approval, key_identifier, ApprovalSignatureError
 from .. import revocation
 from ..file_lock import exclusive_lock
@@ -71,16 +72,17 @@ class Governance:
             raise GovernanceError("Approval signing key is not configured")
         with self._update_lock():
             try:
-                self._assert_key_active(self.approval_key)
+                key_id = self._assert_key_active(self.approval_key)
+                authorized_by = approver_policy.authorize(key_id, approver.strip())
                 approval = sign_approval(Approval(proposal.proposal_digest, approver.strip(), True, reason),
                                          self.approval_key)
-            except ApprovalSignatureError as exc:
+            except (ApprovalSignatureError, approver_policy.ApproverPolicyError) as exc:
                 raise GovernanceError(str(exc)) from exc
             # apply() accepts only approvals recorded here, in the same ledger it is given.
             self.audit.append("proposal_approval_signed", {
                 "proposal_digest": proposal.proposal_digest, "approver": approval.approver,
                 "key_id": approval.key_id, "approval_signature_digest": digest_text(approval.signature),
-                "reason": approval.reason,
+                "reason": approval.reason, "authorized_by": authorized_by,
             })
             return approval
 
@@ -245,6 +247,10 @@ class Governance:
             raise GovernanceError("Approval key identifier does not match the configured key; signature is invalid")
         if not verify_approval(approval, self.approval_key):
             raise GovernanceError("Approval signature is missing or invalid")
+        try:
+            approver_policy.authorize(approval.key_id, approval.approver)
+        except approver_policy.ApproverPolicyError as exc:
+            raise GovernanceError(str(exc)) from exc
         if approval.proposal_digest != proposal.proposal_digest:
             raise GovernanceError("Approval does not bind this exact proposal")
         if proposal.sealed().proposal_digest != proposal.proposal_digest:

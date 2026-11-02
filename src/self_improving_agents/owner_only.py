@@ -1,6 +1,7 @@
 """Files and directories that only the current user can open: restrict them, and verify it."""
 from __future__ import annotations
 import functools
+import json
 import os
 import re
 import stat
@@ -62,6 +63,21 @@ def _replace_windows_dacl(path: Path, sddl: str) -> None:
             raise OSError(error, "cannot set the access-control list", str(path))
     finally:
         kernel32.LocalFree(descriptor)
+
+
+def save_owner_only(path: Path, document: dict) -> None:
+    """Atomically replace a JSON file in an owner-only folder, refusing a result that is not owner-only."""
+    data = (json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8")
+    temp = path.with_name(path.name + ".tmp")
+    temp.unlink(missing_ok=True)
+    descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(data); stream.flush(); os.fsync(stream.fileno())
+    own_as_current_user(temp)
+    problem = owner_only_problem(temp)
+    if problem:
+        raise OSError(f"Refusing to save {path}: {problem}")
+    os.replace(temp, path)
 
 
 def own_as_current_user(path: Path) -> None:

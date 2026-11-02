@@ -14,34 +14,30 @@ from pathlib import Path
 import pytest
 
 from self_improving_agents import container_capabilities as sandbox
+from docker_support import container_test_root, DOCKER, docker_unavailable
 
 MISSING_IMAGE = "python@sha256:" + "0" * 64
 
 
 def test_missing_image_fails_closed_without_pull(monkeypatch):
     try:
-        info = subprocess.run(["docker.exe", "info", "--format", "{{.ServerVersion}}"],
+        info = subprocess.run([DOCKER, "info", "--format", "{{.ServerVersion}}"],
                               capture_output=True, timeout=10, check=False)
         if info.returncode != 0:
-            pytest.skip("Docker daemon is unavailable")
+            docker_unavailable("Docker daemon is unavailable")
         # Same host gate as the other real-Docker tests: run only where the sandbox is set up.
-        pinned = subprocess.run(["docker.exe", "image", "inspect", sandbox.PINNED_IMAGE],
+        pinned = subprocess.run([DOCKER, "image", "inspect", sandbox.PINNED_IMAGE],
                                 capture_output=True, timeout=5, check=False)
         if pinned.returncode != 0:
-            pytest.skip("Pinned sandbox image is unavailable")
-        present = subprocess.run(["docker.exe", "image", "inspect", MISSING_IMAGE],
+            docker_unavailable("Pinned sandbox image is unavailable")
+        present = subprocess.run([DOCKER, "image", "inspect", MISSING_IMAGE],
                                  capture_output=True, timeout=5, check=False)
     except (OSError, subprocess.SubprocessError):
-        pytest.skip("Docker CLI or daemon is unavailable")
+        docker_unavailable("Docker CLI or daemon is unavailable")
     if present.returncode == 0:
         pytest.fail("The all-zero test digest unexpectedly exists locally")
 
-    root_value = os.environ.get("D8_CONTAINER_TEST_ROOT")
-    if not root_value:
-        pytest.fail("D8_CONTAINER_TEST_ROOT must specify an accessible D: directory")
-    root = Path(root_value).resolve()
-    if not root.is_dir() or root.drive.upper() != "D:":
-        pytest.fail("Missing-image test workspace root must be an existing D: directory")
+    root = container_test_root()
 
     workspace = root / ("d8-missing-image-" + uuid.uuid4().hex[:16])
     workspace.mkdir()
