@@ -23,8 +23,9 @@ by the OS when the process ends). An unexpected unlock failure is reported (Lock
 note on the exception already propagating), and the handles are still closed, which releases the
 lock, possibly after a delay.
 
-A process that exits or is killed releases its locks. On POSIX the lock is fcntl.flock(LOCK_EX),
-unchanged (it blocks without polling, with no deadline).
+A process that exits or is killed releases its locks. On POSIX the lock is fcntl.flock(LOCK_EX) with the
+same acquisition deadline. POSIX has no portable timed flock, so the waiter retries LOCK_NB with a backoff
+capped at 50 ms; it notices a release within that cap, but waiters are not served in arrival order.
 """
 from __future__ import annotations
 import functools
@@ -278,14 +279,25 @@ else:
         finally:
             _release(held)
 
+    _POLL_MAX_SECONDS = 0.05
+
     def _acquire(path: Path, timeout: float):
         stream = path.open("a+b")
+        deadline, delay = time.monotonic() + timeout, 0.001
         try:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            while True:
+                try:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    return stream
+                except BlockingIOError:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise LockTimeoutError(f"Timed out after {timeout:g} s waiting for the lock on {path}") from None
+                    time.sleep(min(delay, remaining))
+                    delay = min(delay * 2, _POLL_MAX_SECONDS)
         except BaseException:
             stream.close()
             raise
-        return stream
 
     def _release(stream) -> None:
         try:

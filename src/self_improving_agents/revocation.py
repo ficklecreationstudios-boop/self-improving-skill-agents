@@ -20,7 +20,7 @@ from hashlib import sha256
 from pathlib import Path
 
 from .file_lock import exclusive_lock
-from .owner_only import owner_only_problem, restrict_to_current_user
+from .owner_only import own_as_current_user, owner_only_problem, restrict_to_current_user
 
 APP_DIRECTORY = "self-improving-skill-agents"
 REGISTRY_NAME = "approval-key-revocations.json"
@@ -136,6 +136,7 @@ def _store_unlocked(path: Path, revocations: list[dict]) -> None:
         descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(data); stream.flush(); os.fsync(stream.fileno())
+        own_as_current_user(temp)
         problem = owner_only_problem(temp)
         if problem:
             raise RevocationRegistryError(f"Refusing to save a revocation registry that is not owner-only: {problem}")
@@ -146,7 +147,7 @@ def _store_unlocked(path: Path, revocations: list[dict]) -> None:
                 os.fsync(directory)
             finally:
                 os.close(directory)
-    except OSError as exc:
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         raise RevocationRegistryError(f"Could not safely update the revocation registry {path}: {exc}") from exc
     finally:
         temp.unlink(missing_ok=True)

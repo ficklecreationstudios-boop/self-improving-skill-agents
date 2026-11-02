@@ -7,6 +7,8 @@ import stat
 import subprocess
 from pathlib import Path
 
+_OWNER = re.compile(r"O:(S-1-[0-9-]+|[A-Z]{2})")
+
 
 @functools.lru_cache(maxsize=1)
 def current_user_sid() -> str:
@@ -26,6 +28,50 @@ def restrict_to_current_user(path: Path, *, directory: bool = False) -> None:
     grant = f"*{current_user_sid()}:(OI)(CI)(F)" if directory else f"*{current_user_sid()}:(F)"
     subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", grant],
                    capture_output=True, text=True, timeout=30, check=True)
+    own_as_current_user(path)
+
+
+def own_as_current_user(path: Path) -> None:
+    """Make the current user the owner of path; an elevated process's new files belong to Administrators."""
+    if os.name != "nt":
+        return
+    owner = _OWNER.match(_windows_security_descriptor(path))
+    if not owner or owner.group(1) != current_user_sid():
+        subprocess.run(["icacls", str(path), "/setowner", f"*{current_user_sid()}"],
+                       capture_output=True, text=True, timeout=30, check=True)
+
+
+@functools.lru_cache(maxsize=1)
+def _local_administrator_sid() -> str:
+    """The SID that the SDDL alias LA stands for on this computer."""
+    import ctypes
+    from ctypes import wintypes
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi32.ConvertStringSidToSidW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_void_p)]
+    advapi32.ConvertStringSidToSidW.restype = wintypes.BOOL
+    advapi32.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
+    advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
+    binary = ctypes.c_void_p()
+    if not advapi32.ConvertStringSidToSidW("LA", ctypes.byref(binary)):
+        raise OSError(ctypes.get_last_error(), "cannot resolve the local administrator SID")
+    try:
+        text = wintypes.LPWSTR()
+        if not advapi32.ConvertSidToStringSidW(binary, ctypes.byref(text)):
+            raise OSError(ctypes.get_last_error(), "cannot convert the local administrator SID")
+        try:
+            return text.value or ""
+        finally:
+            kernel32.LocalFree(ctypes.cast(text, ctypes.c_void_p))
+    finally:
+        kernel32.LocalFree(binary)
+
+
+def expand_local_administrator(sddl: str, sid: str) -> str:
+    """Windows writes the built-in Administrator's SID as LA in SDDL; put the SID back so it compares by SID."""
+    return re.sub(r"(?<=O:)LA(?=D:|G:|$)|(?<=;)LA(?=\))", sid, sddl)
 
 
 def _windows_security_descriptor(path: Path) -> str:
@@ -56,14 +102,15 @@ def _windows_security_descriptor(path: Path) -> str:
     if not to_string(buffer, 1, info, ctypes.byref(text), None):
         raise OSError(ctypes.get_last_error(), "cannot convert the security descriptor", str(path))
     try:
-        return text.value or ""
+        sddl = text.value or ""
     finally:
         kernel32.LocalFree(ctypes.cast(text, ctypes.c_void_p))
+    return expand_local_administrator(sddl, _local_administrator_sid()) if "LA" in sddl else sddl
 
 
 def sddl_problem(sddl: str, sid: str) -> str | None:
     """Why an owner+DACL SDDL string is not owner-only for sid, or None if it is."""
-    owner = re.match(r"O:(S-1-[0-9-]+|[A-Z]{2})", sddl)
+    owner = _OWNER.match(sddl)
     if not owner or owner.group(1) != sid:
         return f"owner is {owner.group(1) if owner else 'unknown'}, not the current user"
     dacl = re.search(r"D:([A-Z_]*)((?:\([^)]*\))*)", sddl)
