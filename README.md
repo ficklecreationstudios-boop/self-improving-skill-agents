@@ -32,7 +32,7 @@ The file reader and search open only `.md`, `.txt`, `.py`, `.json`, `.yaml`, `.y
 
 Each tool call runs in a short-lived Docker container from a digest-pinned image: workspace mounted read-only, no network, read-only root filesystem, all capabilities dropped, `no-new-privileges`, a non-root user, and pids/memory/CPU limits. If Docker or the pinned image is unavailable, the tool call fails closed; it never falls back to running on the host. The image is never downloaded automatically (`--pull never`), so pull it once with the command below. The command exits non-zero if the agent stops without a valid final answer.
 
-**Verified scope:** this container sandbox has been exercised on one Windows host only. It has not been independently reviewed, and Linux sandbox verification is not yet supported. See `docs/ACCEPTANCE_D3_D11.md` for open items.
+**Verified scope:** this container sandbox has been exercised on one Windows host and, in CI, on Linux Docker. It has not been independently reviewed. See `docs/ACCEPTANCE_D3_D11.md` for open items.
 
 Prerequisite: Docker Engine and the pinned image:
 ```powershell
@@ -63,6 +63,8 @@ skill-agents apply-proposal data/proposals/software_engineering.json data/approv
 skill-agents verify-audit
 skill-agents recover
 ```
+To notice a full rewrite of the ledger, run `skill-agents anchor-audit` and keep the printed hash off this computer as well; `verify-audit` then checks every anchor. To limit who may approve, run `skill-agents add-approver --key-file <key> --name <name>`: once a list exists, only listed key and name pairs can sign or apply.
+
 Before signing, `approve-proposal` first refuses a revoked key, or a stale proposal whose skill has changed since the proposal was made. Otherwise it prints the current skill, the proposed replacement and a line diff. Control and invisible formatting characters, such as terminal escape sequences and bidirectional overrides, are shown as `\uXXXX` so they cannot hide or rewrite what you see. Then it asks you to type the exact skill ID. Anything else, including an empty answer or end of input, cancels without signing. The skill is checked again after you confirm. Pass the same `--skills`, `--archive` and `--audit` values to `approve-proposal` and `apply-proposal`. The prompt reads standard input, so piping the skill ID in skips the reading but not the record of what was signed.
 
 When `apply-proposal` refuses, it prints one line starting `apply-proposal failed:` and exits with status 1. It refuses on a stale proposal, a revoked key, a missing signed record, a registry problem, an unreadable key, or a malformed proposal or approval file. Any other error still shows a full traceback.

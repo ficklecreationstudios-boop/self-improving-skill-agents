@@ -26,6 +26,10 @@ The table above is the **release** standard and is unchanged. For single-owner p
 
 That record is not a release approval.
 
+## Latest status (2026-11-02)
+
+See [COMPLETION_STATUS.md](COMPLETION_STATUS.md) for the per-gate status at the latest commit, including the second D3.7 **FAIL**. The table above is not rewritten by it, and the release standard stays **NOT APPROVED**.
+
 ## Non-negotiable rules
 
 - No completion percentage without an evidence-backed denominator.

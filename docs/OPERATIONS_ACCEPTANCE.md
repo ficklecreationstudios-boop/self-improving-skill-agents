@@ -17,14 +17,14 @@ This runbook is a checklist for the operator performing a clean-machine test. It
 
 ## Container sandbox integration tests
 1. Install Docker Engine and pull the pinned image; the digest is `PINNED_IMAGE` in `src/self_improving_agents/container_capabilities.py`.
-2. Set `D8_CONTAINER_TEST_ROOT` to an existing directory on `D:` that Docker can bind-mount.
+2. Set `D8_CONTAINER_TEST_ROOT` to an existing directory that Docker can bind-mount. Set `D8_REQUIRE_DOCKER=1` to make a skip fail.
 3. Run `pytest -q -rs tests/test_container_os_sandbox.py tests/test_container_workspace_integration.py tests/test_container_capabilities.py`.
 4. Confirm in the output that `test_real_container_enforces_os_sandbox_controls`, `test_real_container_reads_searches_and_rejects_mount_escape` and `test_real_docker_container_integration` **passed**. A skip means the sandbox was not exercised and is not passing evidence.
 
 Behaviour of these three tests, as implemented:
 - Docker CLI missing, daemon unavailable, or pinned image not present locally: all three **skip**.
-- Docker and image available, but `D8_CONTAINER_TEST_ROOT` unset, not a directory, or not on `D:`: `test_real_container_enforces_os_sandbox_controls` and `test_real_container_reads_searches_and_rejects_mount_escape` **fail** by design, so a configured sandbox run cannot silently skip. `test_real_docker_container_integration` does not use this variable; it creates its workspace inside the repository checkout.
-- The tests invoke `docker.exe`. On Linux that executable is not found, so all three skip even when Docker is installed. Linux sandbox verification is not yet supported.
+- Docker and image available, but `D8_CONTAINER_TEST_ROOT` unset or not a directory: `test_real_container_enforces_os_sandbox_controls` and `test_real_container_reads_searches_and_rejects_mount_escape` **fail** by design, so a configured sandbox run cannot silently skip. `test_real_docker_container_integration` does not use this variable; it creates its workspace inside the repository checkout.
+- The tests use `docker.exe` on Windows and `docker` elsewhere. The `docker-sandbox` CI job runs them on Linux with skips forbidden. Hosted Windows runners have no Linux containers, so Windows evidence stays local.
 
 ## Backup and restore drill
 1. Stop all writers. Copy the skill tree, audit ledger, archive/journal directory, and required configuration to a timestamped backup; do not copy secrets into source control.
@@ -43,3 +43,6 @@ Behaviour of these three tests, as implemented:
 
 ## Failure handling
 Stop on any missing backup, hash mismatch, invalid audit, unexpected skill mutation, failed test, ambiguous recovery result or unreviewed security finding. Keep failed outputs; do not overwrite them with a rerun.
+
+## Automated clean-machine drill
+`scripts/ops-drill.ps1` runs this runbook's install, no-model, governance, key rotation, audit anchor, backup and restore, recovery, rollback, upgrade and uninstall steps. It writes to the real per-user registry, so it refuses to run outside CI. The `clean-windows-ops-drill` job runs it on a clean hosted Windows runner. Live-model and container steps are not part of it.
