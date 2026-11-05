@@ -79,7 +79,7 @@ The application has no third-party runtime dependencies. You need Python 3.11 or
    ```powershell
    docker pull python@sha256:0dd364ba7e10242f07755449e3a3d0e35f9efd987952737b90def6709ab0c5ce
    ```
-4. **Make a working folder on a fast internal drive.** `data\audit.jsonl` and `skills\` are found relative to where you run the command, so always run from this folder, or every command will quietly use a different ledger. Copy the repository's `skills\` into it as a starting point. On the original PC, an external USB drive stalled ledger writes for up to 13 s, long enough to hit the 10 s lock limit.
+4. **Make a working folder on a fast, reliable local drive of your choice.** `data\audit.jsonl` and `skills\` are found relative to where you run the command, so always run from this folder, or every command will quietly use a different ledger. Copy the repository's `skills\` into it as a starting point. Any drive works as long as it stays responsive: on the original PC, one external USB drive stalled ledger writes for up to 13 s, long enough to hit the 10 s lock limit.
 5. **Set up approvals, if you'll change skills.**
    ```powershell
    skill-agents init-revocation-registry
