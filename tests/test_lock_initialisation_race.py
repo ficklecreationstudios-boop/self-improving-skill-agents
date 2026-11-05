@@ -27,8 +27,9 @@ def _hold_then_release(lock_path, held, released):
         held.set()
         time.sleep(HOLD_SECONDS)
         holder.seek(0)
-        msvcrt.locking(holder.fileno(), msvcrt.LK_UNLCK, 1)
+        # Set just before unlocking: a waiter wakes at once on unlock, and must not see this unset after a real release.
         released.set()
+        msvcrt.locking(holder.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def _enter_while_empty_file_is_held(lock_path, enter_lock):
