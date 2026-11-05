@@ -10,7 +10,7 @@ import pytest
 
 from self_improving_agents import container_capabilities as sandbox
 from self_improving_agents.capabilities import CapabilityRegistry
-from docker_support import DOCKER, docker_unavailable
+from docker_support import DOCKER, DOCKER_CHECK_TIMEOUT, docker_unavailable
 
 
 def make_registry(tmp_path, **kwargs):
@@ -228,7 +228,7 @@ def test_real_docker_container_integration():
         info = subprocess.run(
             [DOCKER, "info", "--format", "{{.ServerVersion}}"],
             capture_output=True,
-            timeout=5,
+            timeout=DOCKER_CHECK_TIMEOUT,
             check=False,
         )
         if info.returncode != 0:
@@ -236,13 +236,13 @@ def test_real_docker_container_integration():
         image = subprocess.run(
             [DOCKER, "image", "inspect", sandbox.PINNED_IMAGE],
             capture_output=True,
-            timeout=5,
+            timeout=DOCKER_CHECK_TIMEOUT,
             check=False,
         )
         if image.returncode != 0:
             docker_unavailable("Pinned sandbox image is not locally available")
-    except (OSError, subprocess.SubprocessError):
-        docker_unavailable("Docker CLI or daemon is unavailable")
+    except (OSError, subprocess.SubprocessError) as exc:
+        docker_unavailable(f"Docker CLI or daemon is unavailable: {exc}")
 
     repo_root = Path(__file__).resolve().parents[1]
     workspace = repo_root / f".d8-docker-integration-{uuid.uuid4().hex}"

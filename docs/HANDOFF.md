@@ -90,11 +90,33 @@ The application has no third-party runtime dependencies. You need Python 3.11 or
 6. **Check it.**
    ```powershell
    skill-agents ask "What is 12 times 12?"
-   skill-agents agent "Read notes.md and summarise it" --workspace C:\some\safe\folder
+   skill-agents agent "Read notes.md and summarise it" --workspace <a safe folder>
    skill-agents verify-audit
    skill-agents anchor-audit
    ```
    Keep the hash from `anchor-audit` off the machine. It only covers the ledger up to that point, so repeat it occasionally and keep every hash.
+
+## First-use walkthrough
+
+A repeatable check that uses a throwaway folder and ledger, so real data stays as it is.
+
+1. Make a throwaway folder and work from it, so the ledger lands there. Copy the repository's `skills` folder into it, and put a harmless `notes.md` in a `workspace` subfolder.
+2. Check the commands exist:
+   ```powershell
+   skill-agents --help
+   skill-agents agent --help
+   ```
+3. Run a harmless task. `OLLAMA_MODEL` must be set, and Docker must be running with the pinned image:
+   ```powershell
+   skill-agents agent "Read notes.md and summarise it in one sentence." --workspace workspace
+   ```
+4. Confirm four things:
+   - The answer matches the file, and is labelled as model output that is not fact-checked.
+   - The printed summary shows `read_text_file` in `tool_names` and `stop_reason` of `final_answer`.
+   - `skill-agents verify-audit` prints `VALID`, and `data\audit.jsonl` holds `agent_tool_invoked` and `agent_task_completed`.
+   - `docker ps -a --filter name=skill-agents-cap-` lists nothing. Agent tool containers use that name prefix.
+
+**Don't run these in a throwaway check:** `anchor-audit`, `init-revocation-registry`, `add-approver` and `revoke-approval-key`. They write to the shared per-user folder, not the throwaway folder. An anchor for a throwaway ledger is harmless but stays in the shared file. This happened on the original PC, on 2026-11-05.
 
 ## Everyday use
 
@@ -196,19 +218,32 @@ The evaluation **failed both times**, and the owner accepted that for personal u
 
 Run the full local check with Docker and the live model like this:
 ```powershell
-$env:D8_REQUIRE_DOCKER="1"; $env:D8_CONTAINER_TEST_ROOT="C:\some\folder"
+$env:D8_REQUIRE_DOCKER="1"; $env:D8_CONTAINER_TEST_ROOT="<a folder Docker can mount>"
 $env:RUN_OLLAMA_INTEGRATION="1"; $env:RUN_SECURITY_INTEGRATION="1"
 $env:OLLAMA_MODEL="qwen3:8b"; $env:OLLAMA_THINK="false"; $env:OLLAMA_TIMEOUT="300"
-$env:SECURITY_BENCHMARK_REPORT="C:\some\folder\security.jsonl"
+$env:SECURITY_BENCHMARK_REPORT="<a folder outside the repository>\security.jsonl"
 pytest -q -rs
 ```
-Last result on Windows: 544 passed, 0 failed, 8 skipped. Those skips were symlink tests, which need an elevated shell or Developer Mode.
+Last result on Windows with the live model on: 544 passed, 0 failed, 8 skipped. Those skips were symlink tests, which need an elevated shell or Developer Mode. Later runs without the live model count 549 passed and 14 skipped.
 
 **Things that have caught people out:**
-- Docker Desktop can lose its mount of a drive and report `no such device`. Container tools then fail safely, and restarting Docker Desktop fixes it. The app's own code is mounted too, so the install location needs to be mountable, not just the workspace.
+- Docker Desktop can lose its mount of a drive and report `no such device`, as below.
 - Text piped from Windows PowerShell 5.1 did not reach the approval prompt on a hosted runner. The drill feeds typed confirmations from a file instead.
 - Hosted Windows runners are elevated, so new files belong to Administrators there. Test elevated at least once.
 - Job logs need admin sign-in, while annotations are public.
+- A hosted run once failed because `docker info` did not answer within 5 s, even though `docker pull` had just worked. Docker checks in tests now share a 30 s limit, `DOCKER_CHECK_TIMEOUT` in `tests/docker_support.py`, and their failure messages include the real error. It happened once in 7 runs, so the cause is not proven; a repeat would now state itself clearly. A check that still doesn't answer fails the run when `D8_REQUIRE_DOCKER=1`. This limit is separate from the 8 s sandbox limit on tool calls.
+
+### If Docker loses a drive
+
+**Symptom:** tool calls fail with `Sandbox process failed`, or Docker reports `no such device` for a path on that drive, while Windows can still read the drive. On the original PC this was an external USB drive, seen twice in 3 days. Sleep and USB power-saving may be the trigger, but that is not proven.
+
+**Fix without a restart.** This keeps running containers up. It worked on Docker Desktop 4.97.0 with the WSL 2 backend, for `D:`. Change the drive letter if needed:
+```powershell
+& "$env:WINDIR\System32\wsl.exe" -d docker-desktop --cd / -e sh -c 'for m in /tmp/docker-desktop-root/run/desktop/mnt/host/d /tmp/docker-desktop-root/mnt/host/d /mnt/host/d /mnt/host/d; do umount -l $m; done; mount -t drvfs D:\\ /mnt/host/d -o metadata,uid=0,gid=0,symlinkroot=/mnt/host/; ls /mnt/host/d | head -3'
+```
+It should end by listing a few folders from the drive. Before relying on it, check that no running container binds that drive, with `docker inspect`. These are Docker Desktop internals, so a future version may differ.
+
+**If that doesn't work,** restart Docker Desktop, which interrupts running containers. Then rerun the real sandbox tests with `D8_REQUIRE_DOCKER=1`.
 
 ## What's left
 

@@ -60,6 +60,11 @@ Run from the live folder at `97794bb`, not elevated, with Docker required: Windo
 
 **Not yet exercised:** a real sign-and-apply on real skills. It has only been drilled on disposable data.
 
-## Environment problem found and fixed
+## Environment problems found since
 
-On 2026-11-02 Docker Desktop lost its mount of `D:` ("no such device"), and container tools failed safely. Restarting Docker Desktop fixed it.
+- **Docker Desktop lost its mount of `D:` twice** (2026-11-02 and by 2026-11-05), reporting "no such device", and container tools failed safely. A restart fixed the first. A remount without a restart fixed the second, and 61 real-Docker tests then passed from `D:`, with 3 symlink skips. See [HANDOFF.md](HANDOFF.md#if-docker-loses-a-drive).
+- **Hosted CI run 42031819353 failed `docker-sandbox`** on a documentation-only commit: 59 passed, 1 failed, with `docker info` not answering within 5 s, according to the job log as reported by the owner's review. The other 5 jobs passed, and this job had passed 6 times before. `docker pull` had just succeeded in the step before, so it does not look like a startup problem. The cause is not proven. Docker checks in tests now share a 30 s limit and report the real error, and a check that still doesn't answer fails rather than skips. One green run cannot prove this fixed a failure this rare.
+
+## First-use walkthrough
+
+Done on 2026-11-05 with a throwaway folder and ledger, following [HANDOFF.md](HANDOFF.md#first-use-walkthrough). The answer was correct, there was one `read_text_file` call, the ledger verified, and no containers were left behind. The real ledger and key were not touched. The walkthrough did add an anchor for the throwaway ledger to the shared per-user anchors file, which is harmless but was a mistake. The owner's real anchor still verifies.

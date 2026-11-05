@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from self_improving_agents import container_capabilities as sandbox
-from docker_support import container_test_root, DOCKER, docker_unavailable
+from docker_support import container_test_root, DOCKER, DOCKER_CHECK_TIMEOUT, docker_unavailable
 
 MISSING_IMAGE = "python@sha256:" + "0" * 64
 
@@ -22,18 +22,18 @@ MISSING_IMAGE = "python@sha256:" + "0" * 64
 def test_missing_image_fails_closed_without_pull(monkeypatch):
     try:
         info = subprocess.run([DOCKER, "info", "--format", "{{.ServerVersion}}"],
-                              capture_output=True, timeout=10, check=False)
+                              capture_output=True, timeout=DOCKER_CHECK_TIMEOUT, check=False)
         if info.returncode != 0:
             docker_unavailable("Docker daemon is unavailable")
         # Same host gate as the other real-Docker tests: run only where the sandbox is set up.
         pinned = subprocess.run([DOCKER, "image", "inspect", sandbox.PINNED_IMAGE],
-                                capture_output=True, timeout=5, check=False)
+                                capture_output=True, timeout=DOCKER_CHECK_TIMEOUT, check=False)
         if pinned.returncode != 0:
             docker_unavailable("Pinned sandbox image is unavailable")
         present = subprocess.run([DOCKER, "image", "inspect", MISSING_IMAGE],
-                                 capture_output=True, timeout=5, check=False)
-    except (OSError, subprocess.SubprocessError):
-        docker_unavailable("Docker CLI or daemon is unavailable")
+                                 capture_output=True, timeout=DOCKER_CHECK_TIMEOUT, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        docker_unavailable(f"Docker CLI or daemon is unavailable: {exc}")
     if present.returncode == 0:
         pytest.fail("The all-zero test digest unexpectedly exists locally")
 

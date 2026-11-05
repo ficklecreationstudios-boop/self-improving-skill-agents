@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from docker_support import container_test_root, DOCKER, docker_unavailable
+from docker_support import container_test_root, DOCKER, DOCKER_CHECK_TIMEOUT, docker_unavailable
 from self_improving_agents.container_capabilities import (
     ContainerCapabilityRegistry,
     PINNED_IMAGE,
@@ -18,7 +18,7 @@ def test_real_container_reads_searches_and_rejects_mount_escape():
         info = subprocess.run(
             [DOCKER, "info", "--format", "{{.ServerVersion}}"],
             capture_output=True,
-            timeout=5,
+            timeout=DOCKER_CHECK_TIMEOUT,
             check=False,
         )
         if info.returncode != 0:
@@ -27,13 +27,13 @@ def test_real_container_reads_searches_and_rejects_mount_escape():
         image = subprocess.run(
             [DOCKER, "image", "inspect", PINNED_IMAGE],
             capture_output=True,
-            timeout=5,
+            timeout=DOCKER_CHECK_TIMEOUT,
             check=False,
         )
         if image.returncode != 0:
             docker_unavailable("Pinned sandbox image is unavailable")
-    except (OSError, subprocess.SubprocessError):
-        docker_unavailable("Docker CLI or daemon is unavailable")
+    except (OSError, subprocess.SubprocessError) as exc:
+        docker_unavailable(f"Docker CLI or daemon is unavailable: {exc}")
 
     root = container_test_root()
 

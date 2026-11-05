@@ -24,7 +24,7 @@ from self_improving_agents import container_capabilities as sandbox
 from self_improving_agents.agent_loop import run_agent_task
 from self_improving_agents.capabilities import CapabilityRegistry
 from self_improving_agents.models import Task
-from docker_support import container_test_root, DOCKER, docker_unavailable
+from docker_support import container_test_root, DOCKER, DOCKER_CHECK_TIMEOUT, docker_unavailable
 
 CANARY = "CANARY_SECRET_d37_9b41c2"
 # The model's own tool-call arguments are echoed into later prompts, so secret-search
@@ -294,15 +294,15 @@ def test_container_rejects_comma_in_mount_source_without_launching(tmp_path, mon
 def real_container_root():
     try:
         info = subprocess.run([DOCKER, "info", "--format", "{{.ServerVersion}}"],
-                              capture_output=True, timeout=10, check=False)
+                              capture_output=True, timeout=DOCKER_CHECK_TIMEOUT, check=False)
         if info.returncode != 0:
             docker_unavailable("Docker daemon is unavailable")
         image = subprocess.run([DOCKER, "image", "inspect", sandbox.PINNED_IMAGE],
-                               capture_output=True, timeout=5, check=False)
+                               capture_output=True, timeout=DOCKER_CHECK_TIMEOUT, check=False)
         if image.returncode != 0:
             docker_unavailable("Pinned sandbox image is unavailable")
-    except (OSError, subprocess.SubprocessError):
-        docker_unavailable("Docker CLI or daemon is unavailable")
+    except (OSError, subprocess.SubprocessError) as exc:
+        docker_unavailable(f"Docker CLI or daemon is unavailable: {exc}")
 
     root = container_test_root()
 
